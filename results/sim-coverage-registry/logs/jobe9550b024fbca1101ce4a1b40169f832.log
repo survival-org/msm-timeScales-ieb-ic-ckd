@@ -1,0 +1,18 @@
+### [bt]: This is batchtools v0.9.17
+### [bt]: Starting calculation of 1 jobs
+### [bt]: Setting working directory to 'C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction'
+### [bt]: Memory measurement disabled
+### [bt]: Starting job [batchtools job.id=1150]
+### [bt]: Generating problem instance for problem 'coverage' ...
+[1] "ndf after ic dim: 500" "ndf after ic dim: 8"  
+
+  0   1 
+147 353 
+
+  0   1 
+169 331 
+[1] "now sim wrapper ends"
+### [bt]: Applying algorithm 'coverage_cox' on problem 'coverage' for job 1150 (seed = 11023172) ...
+
+### [bt]: Job terminated successfully [batchtools job.id=1150]
+### [bt]: Calculation finished!

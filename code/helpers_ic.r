@@ -6,9 +6,10 @@ library(stringr)
 library(mvtnorm)
 library(rlang)
 library(survival)
-library(icenReg)
+# library(icenReg)
 library(mgcv)
 library(pammtools)
+library(flexsurv)
 
 read_file <- function(a_infile, header="auto",sep="auto",fill=FALSE, ...){
 	tblInRaw <- fread(a_infile, header=header, sep=sep)
@@ -41,7 +42,11 @@ sim_wrapper <- function(
   if(ic) {
     ndf <- add_interval_censoring(ndf, max_time = max(ndf$time), visits_range = c(1, 10), ic_mechanism = ic_mechanism, round = round)
   }
-
+saveRDS(ndf, "ndf_ic.rds")
+print(paste0("ndf after ic dim: ", dim(ndf)))
+print(table(ndf$status))
+print(table(ndf$status_ic))
+print("now sim wrapper ends")
   out <- list(ndf, formula)
 
   return(out)
@@ -54,15 +59,12 @@ coverage_wrapper_pam <- function(
   instance,
   bs = "ps",
   k = 10,
-  # ic_point = c("start", "mid", "end", "oracle")
-  ic_point = c("mid", "end", "oracle")) {
+  ic_point = c("mid", "end", "true_time", "oracle")) {
+
+  ic_point <- match.arg(ic_point)
 
   df <- instance[[1]]
   formula <- instance[[2]]
-
-  if(!ic_point %in% c("start", "mid", "end", "oracle"))
-    stop("ic_point must be 'mid', 'end' or 'oracle'!")
-    # stop("ic_point must be 'start', 'mid', 'end' or 'oracle'!")
 
   if(ic_point == "mid") {
     df <- df %>%
@@ -70,10 +72,9 @@ coverage_wrapper_pam <- function(
   }
 
   formula_ped <- case_when(
-    # ic_point == "start" ~ "Surv(time_ic_start, status_ic) ~ x1 + x2",
     ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
     ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
-    ic_point == "oracle" ~ "Surv(time, status) ~ x1 + x2",
+    ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
     TRUE ~ "NA") %>%
     as.formula()
 
@@ -82,7 +83,12 @@ coverage_wrapper_pam <- function(
     formula = formula_ped,
     id      = "id")
 
-  formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + s(x2)")
+  # fit pam
+  if(ic_point == "oracle") {
+    formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + sqrt(x2)")
+  } else {
+    formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + s(x2)")
+  }
 
   mod <- bam(
     formula = as.formula(formula_mod),
@@ -123,29 +129,22 @@ coverage_wrapper_cox <- function(
   job,
   instance,
   formula = NULL,
-  ic_point = c("mid", "end", "oracle")) {
+  ic_point = c("mid", "end", "true_time", "oracle")) {
 
-  if(!ic_point %in% c("start", "mid", "end", "oracle"))
-    stop("ic_point must be 'mid', 'end' or 'oracle'!")
+  ic_point <- match.arg(ic_point)
 
   df <- instance[[1]]
   formula <- instance[[2]]
 
-  # fit regular coxph model
-  formula_cox <- case_when(
-    ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + pspline(x2)",
-    ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + pspline(x2)",
-    ic_point == "oracle" ~ "Surv(time, status) ~ x1 + pspline(x2)",
-    TRUE ~ "NA") %>%
-    as.formula()
+  if(ic_point == "mid") {
+    df <- df %>%
+      mutate(time_ic_mid = (time_ic_start + time_ic_stop) / 2)
+  }
 
-  mod <- coxph(formula = formula_cox, data = df)
-
-  # create new dataset exactly as specified
   formula_ped <- case_when(
     ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
     ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
-    ic_point == "oracle" ~ "Surv(time, status) ~ x1 + x2",
+    ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
     TRUE ~ "NA") %>%
     as.formula()
 
@@ -154,6 +153,12 @@ coverage_wrapper_cox <- function(
     formula = formula_ped,
     id      = "id")
 
+  # fit regular coxph model
+  formula_mod <- update(formula_ped, . ~ x1 + pspline(x2))
+
+  mod <- coxph(formula = formula_mod, data = df)
+
+  # create new dataset exactly as specified
   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
 
   nd <- make_newdata(
@@ -203,18 +208,102 @@ coverage_wrapper_cox <- function(
       surv_lower = surv_lower
     ) %>%
     mutate(
-      hazard_cov = (true_hazard >= hazard_lower) & (true_hazard <= hazard_upper),
-      cumu_cov = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
-      surv_cov = (true_surv >= surv_lower) & (true_surv <= surv_upper)
+      hazard = (true_hazard >= hazard_lower) & (true_hazard <= hazard_upper),
+      cumu = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
+      surv = (true_surv >= surv_lower) & (true_surv <= surv_upper)
     ) %>%
-    select(hazard_cov, cumu_cov, surv_cov) %>%
+    select(hazard, cumu, surv) %>%
     summarize_all(mean)
 
   return(nd)
 }
 
 
-add_interval_censoring <- function(data, max_time, visits_range = c(1, 10), ic_mechanism = c("beta", "uniform"), round = NULL) {
+coverage_wrapper_generalizedGamma <- function(
+  data,
+  job,
+  instance,
+  ic_point = c("mid", "end", "true_time", "oracle"),
+  ic_adjustment = FALSE) {
+
+  ic_point <- match.arg(ic_point)
+
+  df <- instance[[1]]
+  formula <- instance[[2]]
+
+  # Prepare data based on ic_point unless ic_adjustment = TRUE
+  if(ic_point == "mid") {
+    df <- df %>% mutate(time_ic_mid = (time_ic_start + time_ic_stop) / 2)
+  }
+
+  formula_ped <- case_when(
+    ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
+    ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
+    ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
+    TRUE ~ NA_character_
+  ) %>% as.formula()
+
+  ped <- as_ped(
+    data = df,
+    formula = formula_ped,
+    id = "id")
+
+  if(!ic_adjustment){
+    formula_mod <- update(formula_ped, . ~ x1 + pspline(x2))
+  }  else {
+    # interval-censored formula
+    formula_mod <- Surv(time = time_ic_start, time2 = time_ic_stop, type = "interval2") ~ x1 + pspline(x2)
+  }
+
+  # Model fitting
+  mod <- flexsurvreg(formula_mod, data = df, dist = "gengamma")
+
+  # new data preparation
+  nd <- make_newdata(
+    ped,
+    tend = sort(unique(ped$tend)),
+    x1 = median(df$x1),
+    x2 = mean(df$x2)) %>%
+    mutate(
+      true_hazard = exp(eval(parse(text = paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))),
+                             envir = pick(everything()))),
+      true_cumu = cumsum(intlen * true_hazard),
+      true_surv = exp(-true_cumu)
+    )
+
+  # predictions from parametric model
+  pred <- summary(mod, newdata = data.frame(x1 = median(df$x1), x2 = mean(df$x2)),
+                  type = "hazard", t = nd$tend)
+
+  nd <- nd %>%
+    mutate(
+      est_hazard = pred[[1]]$est,
+      hazard_lower = pred[[1]]$lcl,
+      hazard_upper = pred[[1]]$ucl,
+      est_cumu = cumsum(est_hazard * intlen),
+      cumu_lower = cumsum(hazard_lower * intlen),
+      cumu_upper = cumsum(hazard_upper * intlen),
+      est_surv = exp(-est_cumu),
+      surv_lower = exp(-cumu_upper),
+      surv_upper = exp(-cumu_lower)
+    ) %>%
+    mutate(
+      hazard = (true_hazard >= hazard_lower) & (true_hazard <= hazard_upper),
+      cumu = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
+      surv = (true_surv >= surv_lower) & (true_surv <= surv_upper)
+    ) %>%
+    select(hazard, cumu, surv) %>%
+    summarize_all(mean)
+
+  return(nd)
+}
+
+add_interval_censoring <- function(
+  data,
+  max_time,
+  visits_range = c(1, 10),
+  ic_mechanism = c("beta", "uniform"),
+  round = NULL) {
 
   # check necessary columns
   required_cols <- c("id", "time", "status")
@@ -260,10 +349,44 @@ add_interval_censoring <- function(data, max_time, visits_range = c(1, 10), ic_m
             status_ic = status_ic))
   }
 
-  interval_censor_individual_uniform <- function(event_time, event_status, visits_range, max_time, round) {
+  interval_censor_individual_uniform <- function(event_time, event_status, visits_range, max_time, round_digits) {
+    v <- sample(visits_range[1]:visits_range[2], 1)
 
-    # tbd!!!
+    param <- rnorm(1, mean = 0, sd = 1)
+    jitter_sd <- abs(param) + 0.1
 
+    even_times <- seq(0, max_time, length.out = v + 2)[-c(1, v + 2)]
+    jittered_times <- even_times + rnorm(v, mean = 0, sd = jitter_sd)
+
+    # Ensure jittered times are strictly within (0, max_time)
+    jittered_times <- sort(jittered_times[jittered_times > 0 & jittered_times < max_time])
+
+    # Explicit correction: if no valid jittered times, use max_time as the single interval time
+    if (length(jittered_times) == 0) {
+      jittered_times <- max_time
+    }
+
+    if (!is.null(round_digits)) {
+      jittered_times <- round(jittered_times, round_digits)
+    }
+
+    obs_times_full <- c(0, jittered_times)
+
+    interval_index <- findInterval(event_time, obs_times_full)
+
+    if (interval_index == length(obs_times_full)) {
+      time_ic_start <- obs_times_full[interval_index - 1]
+      time_ic_stop  <- obs_times_full[interval_index]
+      status_ic <- 0
+    } else {
+      time_ic_start <- obs_times_full[interval_index]
+      time_ic_stop  <- obs_times_full[interval_index + 1]
+      status_ic <- ifelse(event_status == 1, 1, 0)
+    }
+
+    return(c(time_ic_start = time_ic_start,
+            time_ic_stop = time_ic_stop,
+            status_ic = status_ic))
   }
 
   # apply to each individual
@@ -273,17 +396,20 @@ add_interval_censoring <- function(data, max_time, visits_range = c(1, 10), ic_m
     interval_censor_individual_uniform
   }
 
-  interval_data <- t(mapply(interval_fun,
-                            event_time = data$time,
-                            event_status = data$status,
-                            MoreArgs = list(visits_range = visits_range,
-                                            max_time = max_time,
-                                            round = round)))
+  interval_list <- mapply(interval_fun,
+                              event_time = data$time,
+                              event_status = data$status,
+                              MoreArgs = list(visits_range = visits_range,
+                                              max_time = max_time,
+                                              round = round),
+                              SIMPLIFY = FALSE)
+
+  interval_data <- do.call(rbind, interval_list)
 
   interval_data_df <- as.data.frame(interval_data)
 
   # return the original data with interval-censored data columns
-  final_data <- dplyr::bind_cols(data, interval_data_df)
+  final_data <- bind_cols(data, interval_data_df)
 
   return(final_data)
 }

@@ -10,16 +10,20 @@ setwd("C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidn
 source("code/helpers_ic.r")
 
 registry_coverage <- "results/sim-coverage-registry"
-repls <- 2
+repls <- 100
 
-set.seed(123)
-a <- sim_wrapper(data = NULL, job = NULL, n = 500, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "beta", round = 2)
+set.seed(11022022)
+a <- sim_wrapper(data = NULL, job = NULL, n = 500, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "uniform", round = 2)
 b <- coverage_wrapper_pam(data = a, job = NULL, instance = a, bs = "ps", k = 10, ic_point = "oracle")
-c <- coverage_wrapper_cox(data = a, job = NULL, instance = a, ic_point = "oracle")
+c <- coverage_wrapper_cox(data = a, job = NULL, instance = a, ic_point = "true_time")
+d <- coverage_wrapper_generalizedGamma(data = a, job = NULL, instance = a, ic_point = "true_time", ic_adjustment = FALSE)
 # b
 # tbd: always compare to oracle pam (using t_true) and Cox and Cox_intervalCens (except for cumu hazard and surv prob?)
 
 # coverage overall hazards ----
+# if (checkmate::test_directory_exists(registry_coverage)) {
+#   unlink(registry_coverage, recursive = TRUE)
+# }
 if (!checkmate::test_directory_exists(registry_coverage)) {
   reg <- makeExperimentRegistry(
     registry_coverage,
@@ -34,13 +38,13 @@ if (!checkmate::test_directory_exists(registry_coverage)) {
   prob_df <- data.frame(
     formula = "~ -3.5 + dgamma(t, 8, 2) * 6 - 1.3 * x1 + sqrt(x2)",
     round = 2,
-    ic_mechanism = "beta"
+    ic_mechanism = c("beta", "uniform")
   )
   algo_df_pam <- data.frame(
-    ic_point = c("mid", "end", "oracle")
+    ic_point = c("mid", "end", "true_time", "oracle")
   )
   algo_df_cox <- data.frame(
-    ic_point = c("mid", "end", "oracle")
+    ic_point = c("mid", "end", "true_time", "oracle")
   )
 
   addExperiments(
@@ -54,7 +58,7 @@ if (!checkmate::test_directory_exists(registry_coverage)) {
 }
 
 reg     <- loadRegistry(registry_coverage, writeable = TRUE)
-ids_res <- findExperiments(prob.name = "coverage", algo.name = "coverage_pam")
+ids_res <- findExperiments(prob.name = "coverage", algo.pattern = "coverage_")
 pars    <- unwrap(getJobPars()) %>% as_tibble()
 res     <- reduceResultsDataTable(ids=findDone(ids_res)) %>%
   as_tibble() %>%
@@ -63,7 +67,7 @@ res     <- reduceResultsDataTable(ids=findDone(ids_res)) %>%
 
 # RMSE and coverage hazard
 res %>%
-  group_by(ic_point) %>%
+  group_by(ic_point, algorithm, ic_mechanism) %>%
   summarize(
     "coverage hazard" = mean(hazard),
     "coverage cumulative hazard" = mean(cumu),
