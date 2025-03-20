@@ -42,11 +42,7 @@ sim_wrapper <- function(
   if(ic) {
     ndf <- add_interval_censoring(ndf, max_time = max(ndf$time), visits_range = c(1, 10), ic_mechanism = ic_mechanism, round = round)
   }
-saveRDS(ndf, "ndf_ic.rds")
-print(paste0("ndf after ic dim: ", dim(ndf)))
-print(table(ndf$status))
-print(table(ndf$status_ic))
-print("now sim wrapper ends")
+
   out <- list(ndf, formula)
 
   return(out)
@@ -59,7 +55,7 @@ coverage_wrapper_pam <- function(
   instance,
   bs = "ps",
   k = 10,
-  ic_point = c("mid", "end", "true_time", "oracle")) {
+  ic_point = c("mid", "end", "mid_end", "true_time", "oracle")) {
 
   ic_point <- match.arg(ic_point)
 
@@ -73,7 +69,7 @@ coverage_wrapper_pam <- function(
 
   formula_ped <- case_when(
     ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
-    ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
+    ic_point %in% c("end", "mid_end") ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
     ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
     TRUE ~ "NA") %>%
     as.formula()
@@ -83,6 +79,11 @@ coverage_wrapper_pam <- function(
     formula = formula_ped,
     id      = "id")
 
+  if(ic_point == "mid_end") {
+    ped <- ped %>%
+      mutate(tmid = (tstart + tend) / 2)
+  }
+
   # fit pam
   if(ic_point == "oracle") {
     formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + sqrt(x2)")
@@ -90,13 +91,23 @@ coverage_wrapper_pam <- function(
     formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + s(x2)")
   }
 
-  mod <- bam(
-    formula = as.formula(formula_mod),
-    data    = ped,
-    family  = poisson(),
-    offset  = offset,
-    method  = "fREML",
-    discrete = TRUE)
+  if(ic_point != "mid_end") {
+    mod <- bam(
+      formula = as.formula(formula_mod),
+      data    = ped,
+      family  = poisson(),
+      offset = offset,
+      method  = "fREML",
+      discrete = TRUE)
+  } else {
+    mod <- bam(
+      formula = as.formula(formula_mod),
+      data    = ped %>% mutate(tend = tmid) %>% select(-tmid),
+      family  = poisson(),
+      offset = offset,
+      method  = "fREML",
+      discrete = TRUE)
+  }
 
   # create new data set
   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
@@ -105,22 +116,53 @@ coverage_wrapper_pam <- function(
     ped,
     tend = sort(unique(ped$tend)),
     x1 = median(df$x1),
-    x2 = mean(df$x2)) %>%
-    mutate(
-      true_hazard = exp(eval(parse(text = formula), envir = pick(everything()))),
-      true_cumu = cumsum(intlen * true_hazard),
-      true_surv = exp(-true_cumu)) %>%
-    add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-    add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-    add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-    mutate(
-      hazard = (true_hazard >= ci_lower) & (true_hazard <= ci_upper),
-      cumu = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
-      surv =  (true_surv >= surv_lower) & (true_surv <= surv_upper)) %>%
-    select(hazard, cumu, surv) %>%
-    summarize_all(mean)
+    x2 = mean(df$x2))
 
-    return(nd)
+  if(ic_point != "mid_end") {
+    nd <- nd %>%
+      mutate(
+        true_loghazard = eval(parse(text = formula), envir = pick(everything())),
+        true_hazard = exp(true_loghazard),
+        true_cumu = cumsum(intlen * true_hazard),
+        true_surv = exp(-true_cumu)) %>%
+      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
+      rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
+      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
+      add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      mutate(
+        loghazard_cov = (true_loghazard >= loghazard_lower) & (true_loghazard <= loghazard_upper),
+        hazard_cov = (true_hazard >= hazard_lower) & (true_hazard <= hazard_upper),
+        cumu_cov = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
+        surv_cov =  (true_surv >= surv_lower) & (true_surv <= surv_upper))
+  } else {
+    nd <- nd %>%
+      mutate(tmid = (tstart + tend) / 2) %>%
+      mutate(
+        true_loghazard = eval(parse(text = formula), envir = pick(everything())),
+        true_hazard = exp(true_loghazard),
+        true_cumu = cumsum(intlen * true_hazard),
+        true_surv = exp(-true_cumu)) %>%
+      rename(tend_original = tend, tend = tmid) %>%
+      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
+      rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
+      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
+      add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+      rename(tmid = tend, tend = tend_original) %>%
+      mutate(
+        loghazard_cov = (true_loghazard >= loghazard_lower) & (true_loghazard <= loghazard_upper),
+        hazard_cov = (true_hazard >= hazard_lower) & (true_hazard <= hazard_upper),
+        cumu_cov = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
+        surv_cov =  (true_surv >= surv_lower) & (true_surv <= surv_upper))
+  }
+
+  nd <- nd %>%
+    select(tstart, tend, loghazard, hazard, cumu, surv, loghazard_cov, hazard_cov, cumu_cov, surv_cov)
+
+  return(nd)
 }
 
 
@@ -212,8 +254,7 @@ coverage_wrapper_cox <- function(
       cumu = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
       surv = (true_surv >= surv_lower) & (true_surv <= surv_upper)
     ) %>%
-    select(hazard, cumu, surv) %>%
-    summarize_all(mean)
+    select(tstart, tend, hazard, cumu, surv)
 
   return(nd)
 }
@@ -228,6 +269,10 @@ coverage_wrapper_generalizedGamma <- function(
 
   ic_point <- match.arg(ic_point)
 
+  if(ic_adjustment) {
+    ic_point <- "mid"
+  }
+
   df <- instance[[1]]
   formula <- instance[[2]]
 
@@ -238,7 +283,7 @@ coverage_wrapper_generalizedGamma <- function(
 
   formula_ped <- case_when(
     ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
-    ic_point == "end" ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
+    ic_point %in% c("end") ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
     ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
     TRUE ~ NA_character_
   ) %>% as.formula()
@@ -292,11 +337,11 @@ coverage_wrapper_generalizedGamma <- function(
       cumu = (true_cumu >= cumu_lower) & (true_cumu <= cumu_upper),
       surv = (true_surv >= surv_lower) & (true_surv <= surv_upper)
     ) %>%
-    select(hazard, cumu, surv) %>%
-    summarize_all(mean)
+    select(tstart, tend, hazard, cumu, surv)
 
   return(nd)
 }
+
 
 add_interval_censoring <- function(
   data,

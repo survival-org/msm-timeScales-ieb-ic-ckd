@@ -14,9 +14,9 @@ repls <- 100
 
 set.seed(11022022)
 a <- sim_wrapper(data = NULL, job = NULL, n = 500, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "uniform", round = 2)
-b <- coverage_wrapper_pam(data = a, job = NULL, instance = a, bs = "ps", k = 10, ic_point = "oracle")
+b <- coverage_wrapper_pam(data = a, job = NULL, instance = a, bs = "ps", k = 10, ic_point = "mid_end")
 c <- coverage_wrapper_cox(data = a, job = NULL, instance = a, ic_point = "true_time")
-d <- coverage_wrapper_generalizedGamma(data = a, job = NULL, instance = a, ic_point = "true_time", ic_adjustment = FALSE)
+d <- coverage_wrapper_generalizedGamma(data = a, job = NULL, instance = a, ic_point = "end", ic_adjustment = TRUE)
 # b
 # tbd: always compare to oracle pam (using t_true) and Cox and Cox_intervalCens (except for cumu hazard and surv prob?)
 
