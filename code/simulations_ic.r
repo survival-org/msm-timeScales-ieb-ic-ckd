@@ -86,22 +86,39 @@ res     <- reduceResultsDataTable(ids=findDone(ids_res)) %>%
   as_tibble() %>%
   tidyr::unnest(cols = c(result)) %>%
   left_join(pars, by = "job.id")
+saveRDS(res, file = "results/datasets/sim-coverage-results.rds")
+res <- readRDS("results/datasets/sim-coverage-results_n1000_roundNULL.rds")
+
+grouping_vars <- c("algorithm", "ic_point", "ic_mechanism")
 
 # coverage overall ----
-coverage <- calc_coverage(data = res, grouping_vars = c("ic_point", "algorithm", "ic_mechanism"))
+coverage <- calc_coverage(data = res, grouping_vars = grouping_vars)
 coverage
+View(coverage %>%
+  filter(ic_mechanism=="beta" & ic_point %in% c("mid", "end", "true_time", "adjustment")) %>%
+  select(-c(ic_mechanism, `coverage loghazard`)))
 
 # RMSE ----
-rmse <- calc_rmse(data = res, grouping_vars = c("ic_point", "algorithm", "ic_mechanism"))
+rmse <- calc_rmse(data = res, grouping_vars = grouping_vars)
 rmse
+View(rmse %>%
+  filter(ic_mechanism=="beta" & ic_point %in% c("mid", "end", "true_time", "adjustment")) %>%
+  select(-c(ic_mechanism, `RMSE loghazard`)))
 
 # line plot ----
-linePlot <- create_linePlot(data = res, grouping_vars = c("ic_point", "algorithm", "ic_mechanism"))
+linePlot <- create_linePlot(data = res, grouping_vars = grouping_vars)
 linePlot
+for(i in 1:length(linePlot)) {
+  ggsave(filename = paste0("results/figures/overall_hazard_coverage/", names(linePlot)[i], ".png"), plot = linePlot[[i]], width = 10, height = 5)
+}
 
 # coverage and bias x1 ----
-coverage_x1 <- calc_coverage_beta(data = res, grouping_vars = c("ic_point", "algorithm", "ic_mechanism"))
+coverage_x1 <- calc_coverage_beta(data = res, grouping_vars = grouping_vars)
 coverage_x1
+
+View(coverage_x1 %>%
+  filter(ic_mechanism=="beta" & ic_point %in% c("mid", "end", "true_time", "adjustment")) %>%
+  select(-c(ic_mechanism)))
 
 # recovery baseline hazard ----
 ## TBD!!!

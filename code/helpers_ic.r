@@ -10,10 +10,9 @@ library(survival)
 library(mgcv)
 library(pammtools)
 library(flexsurv)
-library(knitr)
 library(ggplot2)
 
-
+# data prep ----
 sim_wrapper <- function(
   data,
   job,
@@ -45,7 +44,125 @@ sim_wrapper <- function(
   return(out)
 }
 
+add_interval_censoring <- function(
+  data,
+  max_time,
+  visits_range = c(1, 10),
+  ic_mechanism = c("beta", "uniform"),
+  round = NULL) {
 
+  # check necessary columns
+  required_cols <- c("id", "time", "status")
+  if (!all(required_cols %in% colnames(data))) {
+    stop("Input data must contain columns: id, time, and status.")
+  }
+  if (!ic_mechanism %in% c("beta", "uniform")) {
+    stop("ic_mechanism must be 'beta' or 'uniform'.")
+  }
+
+  interval_censor_individual_beta <- function(event_time, event_status, visits_range, max_time, round) {
+    v <- sample(visits_range[1]:visits_range[2], 1)
+    params <- mvtnorm::rmvnorm(1, mean = c(0, 0), sigma = diag(2))
+
+    shape1 <- abs(params[1]) + 0.5
+    shape2 <- abs(params[2]) + 0.5
+
+    quantiles <- seq(0, 1, length.out = v + 2)[-c(1, v + 2)]
+    obs_times <- sort(qbeta(quantiles, shape1 = shape1, shape2 = shape2) * max_time)
+
+    if(!is.null(round)) {
+      obs_times <- round(obs_times, round)
+    }
+
+    obs_times_full <- c(0, obs_times)
+
+    interval_index <- findInterval(event_time, obs_times_full)
+
+    if (interval_index == length(obs_times_full)) {
+      # event time exceeds largest observed time: censored after last interval
+      time_ic_start <- obs_times_full[interval_index - 1]
+      time_ic_stop  <- obs_times_full[interval_index]
+      status_ic <- 0
+    } else {
+      # event time falls between observed interval points
+      time_ic_start <- obs_times_full[interval_index]
+      time_ic_stop  <- obs_times_full[interval_index + 1]
+      status_ic <- ifelse(event_status == 1, 1, 0)
+    }
+
+    return(c(time_ic_start = time_ic_start,
+            time_ic_stop = time_ic_stop,
+            status_ic = status_ic))
+  }
+
+  interval_censor_individual_uniform <- function(event_time, event_status, visits_range, max_time, round_digits) {
+    v <- sample(visits_range[1]:visits_range[2], 1)
+
+    param <- rnorm(1, mean = 0, sd = 1)
+    jitter_sd <- abs(param) + 0.1
+
+    even_times <- seq(0, max_time, length.out = v + 2)[-c(1, v + 2)]
+    jittered_times <- even_times + rnorm(v, mean = 0, sd = jitter_sd)
+
+    # Ensure jittered times are strictly within (0, max_time)
+    jittered_times <- sort(jittered_times[jittered_times > 0 & jittered_times < max_time])
+
+    # Explicit correction: if no valid jittered times, use max_time as the single interval time
+    if (length(jittered_times) == 0) {
+      jittered_times <- max_time
+    }
+
+    if (!is.null(round_digits)) {
+      jittered_times <- round(jittered_times, round_digits)
+    }
+
+    obs_times_full <- c(0, jittered_times)
+
+    interval_index <- findInterval(event_time, obs_times_full)
+
+    if (interval_index == length(obs_times_full)) {
+      time_ic_start <- obs_times_full[interval_index - 1]
+      time_ic_stop  <- obs_times_full[interval_index]
+      status_ic <- 0
+    } else {
+      time_ic_start <- obs_times_full[interval_index]
+      time_ic_stop  <- obs_times_full[interval_index + 1]
+      status_ic <- ifelse(event_status == 1, 1, 0)
+    }
+
+    return(c(time_ic_start = time_ic_start,
+            time_ic_stop = time_ic_stop,
+            status_ic = status_ic))
+  }
+
+  # apply to each individual
+  interval_fun <- if (ic_mechanism == "beta") {
+    interval_censor_individual_beta
+  } else {
+    interval_censor_individual_uniform
+  }
+
+  interval_list <- mapply(interval_fun,
+                              event_time = data$time,
+                              event_status = data$status,
+                              MoreArgs = list(visits_range = visits_range,
+                                              max_time = max_time,
+                                              round = round),
+                              SIMPLIFY = FALSE)
+
+  interval_data <- do.call(rbind, interval_list)
+
+  interval_data_df <- as.data.frame(interval_data)
+
+  # return the original data with interval-censored data columns
+  final_data <- bind_cols(data, interval_data_df)
+
+  return(final_data)
+}
+
+# algorithms ----
+
+## pam wrapper ----
 wrapper_pam <- function(
   data,
   job,
@@ -192,7 +309,7 @@ wrapper_pam <- function(
   return(nd)
 }
 
-
+## cox wrapper ----
 wrapper_cox <- function(
   data,
   job,
@@ -311,7 +428,7 @@ wrapper_cox <- function(
   return(nd)
 }
 
-
+## weibull wrapper ----
 wrapper_weibull <- function(
   data,
   job,
@@ -453,7 +570,7 @@ wrapper_weibull <- function(
   return(nd)
 }
 
-
+## generalizedGamma wrapper ----
 # wrapper_generalizedGamma <- function(
 #   data,
 #   job,
@@ -575,124 +692,7 @@ wrapper_weibull <- function(
 #   return(nd)
 # }
 
-
-add_interval_censoring <- function(
-  data,
-  max_time,
-  visits_range = c(1, 10),
-  ic_mechanism = c("beta", "uniform"),
-  round = NULL) {
-
-  # check necessary columns
-  required_cols <- c("id", "time", "status")
-  if (!all(required_cols %in% colnames(data))) {
-    stop("Input data must contain columns: id, time, and status.")
-  }
-  if (!ic_mechanism %in% c("beta", "uniform")) {
-    stop("ic_mechanism must be 'beta' or 'uniform'.")
-  }
-
-  interval_censor_individual_beta <- function(event_time, event_status, visits_range, max_time, round) {
-    v <- sample(visits_range[1]:visits_range[2], 1)
-    params <- mvtnorm::rmvnorm(1, mean = c(0, 0), sigma = diag(2))
-
-    shape1 <- abs(params[1]) + 0.5
-    shape2 <- abs(params[2]) + 0.5
-
-    quantiles <- seq(0, 1, length.out = v + 2)[-c(1, v + 2)]
-    obs_times <- sort(qbeta(quantiles, shape1 = shape1, shape2 = shape2) * max_time)
-
-    if(!is.null(round)) {
-      obs_times <- round(obs_times, round)
-    }
-
-    obs_times_full <- c(0, obs_times)
-
-    interval_index <- findInterval(event_time, obs_times_full)
-
-    if (interval_index == length(obs_times_full)) {
-      # event time exceeds largest observed time: censored after last interval
-      time_ic_start <- obs_times_full[interval_index - 1]
-      time_ic_stop  <- obs_times_full[interval_index]
-      status_ic <- 0
-    } else {
-      # event time falls between observed interval points
-      time_ic_start <- obs_times_full[interval_index]
-      time_ic_stop  <- obs_times_full[interval_index + 1]
-      status_ic <- ifelse(event_status == 1, 1, 0)
-    }
-
-    return(c(time_ic_start = time_ic_start,
-            time_ic_stop = time_ic_stop,
-            status_ic = status_ic))
-  }
-
-  interval_censor_individual_uniform <- function(event_time, event_status, visits_range, max_time, round_digits) {
-    v <- sample(visits_range[1]:visits_range[2], 1)
-
-    param <- rnorm(1, mean = 0, sd = 1)
-    jitter_sd <- abs(param) + 0.1
-
-    even_times <- seq(0, max_time, length.out = v + 2)[-c(1, v + 2)]
-    jittered_times <- even_times + rnorm(v, mean = 0, sd = jitter_sd)
-
-    # Ensure jittered times are strictly within (0, max_time)
-    jittered_times <- sort(jittered_times[jittered_times > 0 & jittered_times < max_time])
-
-    # Explicit correction: if no valid jittered times, use max_time as the single interval time
-    if (length(jittered_times) == 0) {
-      jittered_times <- max_time
-    }
-
-    if (!is.null(round_digits)) {
-      jittered_times <- round(jittered_times, round_digits)
-    }
-
-    obs_times_full <- c(0, jittered_times)
-
-    interval_index <- findInterval(event_time, obs_times_full)
-
-    if (interval_index == length(obs_times_full)) {
-      time_ic_start <- obs_times_full[interval_index - 1]
-      time_ic_stop  <- obs_times_full[interval_index]
-      status_ic <- 0
-    } else {
-      time_ic_start <- obs_times_full[interval_index]
-      time_ic_stop  <- obs_times_full[interval_index + 1]
-      status_ic <- ifelse(event_status == 1, 1, 0)
-    }
-
-    return(c(time_ic_start = time_ic_start,
-            time_ic_stop = time_ic_stop,
-            status_ic = status_ic))
-  }
-
-  # apply to each individual
-  interval_fun <- if (ic_mechanism == "beta") {
-    interval_censor_individual_beta
-  } else {
-    interval_censor_individual_uniform
-  }
-
-  interval_list <- mapply(interval_fun,
-                              event_time = data$time,
-                              event_status = data$status,
-                              MoreArgs = list(visits_range = visits_range,
-                                              max_time = max_time,
-                                              round = round),
-                              SIMPLIFY = FALSE)
-
-  interval_data <- do.call(rbind, interval_list)
-
-  interval_data_df <- as.data.frame(interval_data)
-
-  # return the original data with interval-censored data columns
-  final_data <- bind_cols(data, interval_data_df)
-
-  return(final_data)
-}
-
-
+# postprocessing ----
 calc_coverage <- function(data, grouping_vars = NULL, rounding = 3) {
 
   required_cols <- c(
@@ -727,7 +727,7 @@ calc_coverage <- function(data, grouping_vars = NULL, rounding = 3) {
       .groups = "drop"
     )
 
-  return(kable(results))
+  return(results)
 }
 
 
@@ -771,7 +771,7 @@ calc_rmse <- function(data, grouping_vars = NULL, rounding = 3) {
       .groups = "drop"
     )
 
-  return(kable(results))
+  return(results)
 }
 
 
@@ -848,5 +848,5 @@ calc_coverage_beta <- function(data, grouping_vars = NULL, rounding = 3) {
       .groups = "drop"
     )
 
-  return(kable(results))
+  return(results)
 }
