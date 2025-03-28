@@ -36,7 +36,8 @@ sim_wrapper <- function(
   ndf <- sim_pexp(formula = formula, data = df, cut = time_grid)
 
   if(ic) {
-    ndf <- add_interval_censoring(ndf, max_time = max(ndf$time), visits_range = c(1, 10), ic_mechanism = ic_mechanism, round = round)
+    ndf <- add_interval_censoring(ndf, max_time = max(ndf$time), visits_range = c(1, 10), ic_mechanism = ic_mechanism, round = round) %>%
+      filter(time_ic_stop > 0)
   }
 
   out <- list(ndf, formula)
@@ -83,27 +84,38 @@ wrapper_pam <- function(
   # fit pam
   if(ic_point == "oracle") {
     formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + sqrt(x2)")
+  } else if(ic_point == "mid_end") {
+    formula_mod <- paste0("ped_status ~ s(tmid, bs='", bs, "', k=", k, ") + x1 + sqrt(x2)")
   } else {
     formula_mod <- paste0("ped_status ~ s(tend, bs='", bs, "', k=", k, ") + x1 + s(x2)")
   }
 
-  if(ic_point != "mid_end") {
-    mod <- bam(
-      formula = as.formula(formula_mod),
-      data    = ped,
-      family  = poisson(),
-      offset = offset,
-      method  = "fREML",
-      discrete = TRUE)
-  } else {
-    mod <- bam(
-      formula = as.formula(formula_mod),
-      data    = ped %>% mutate(tend = tmid) %>% select(-tmid),
-      family  = poisson(),
-      offset = offset,
-      method  = "fREML",
-      discrete = TRUE)
-  }
+  # if(ic_point != "mid_end") {
+  mod <- bam(
+    formula = as.formula(formula_mod),
+    data    = ped,
+    family  = poisson(),
+    offset = offset,
+    method  = "fREML",
+    discrete = TRUE)
+  # } else {
+  #   mod <- bam(
+  #     formula = as.formula(formula_mod),
+  #     data    = ped %>% mutate(tend = tmid) %>% select(-tmid),
+  #     family  = poisson(),
+  #     offset = offset,
+  #     method  = "fREML",
+  #     discrete = TRUE)
+  # }
+
+  # compute coverage for coefficient of x1
+  beta_true <- as.numeric(gsub("^.*?([+-]?\\s*\\d+\\.?\\d*)\\s*\\*?\\s*x1.*$", "\\1", gsub("\\s+", "", deparse(formula))))
+  summary_mod <- summary(mod)
+  beta_est <- summary_mod$p.coeff["x1"]
+  beta_se  <- summary_mod$se["x1"]
+  ci_lower <- beta_est - 1.96 * beta_se
+  ci_upper <- beta_est + 1.96 * beta_se
+  beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
 
   # create new data set
   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
@@ -112,59 +124,70 @@ wrapper_pam <- function(
     ped,
     tend = sort(unique(ped$tend)),
     x1 = median(df$x1),
-    x2 = mean(df$x2))
+    x2 = mean(df$x2)) %>%
+    mutate(tmid = (tstart + tend) / 2)
 
-  if(ic_point != "mid_end") {
-    nd <- nd %>%
-      mutate(
-        loghazard_true = eval(parse(text = formula), envir = pick(everything())),
-        hazard_true = exp(loghazard_true),
-        cumu_true = cumsum(intlen * hazard_true),
-        surv_true = exp(-cumu_true)) %>%
-      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
-      rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
-      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
-      add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(cumu = cumu_hazard) %>%
-      add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(surv = surv_prob) %>%
-      mutate(
-        loghazard_cov = as.integer((loghazard_true >= loghazard_lower) & (loghazard_true <= loghazard_upper)),
-        hazard_cov = as.integer((hazard_true >= hazard_lower) & (hazard_true <= hazard_upper)),
-        cumu_cov = as.integer((cumu_true >= cumu_lower) & (cumu_true <= cumu_upper)),
-        surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
-  } else {
-    nd <- nd %>%
-      mutate(tmid = (tstart + tend) / 2) %>%
-      mutate(
-        loghazard_true = eval(parse(text = formula), envir = pick(everything())),
-        hazard_true = exp(loghazard_true),
-        cumu_true = cumsum(intlen * hazard_true),
-        surv_true = exp(-cumu_true)) %>%
-      rename(tend_original = tend, tend = tmid) %>%
-      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
-      rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
-      add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
-      add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(cumu = cumu_hazard) %>%
-      add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
-      rename(surv = surv_prob) %>%
-      rename(tmid = tend, tend = tend_original) %>%
-      mutate(
-        loghazard_cov = as.integer((loghazard_true >= loghazard_lower) & (loghazard_true <= loghazard_upper)),
-        hazard_cov = as.integer((hazard_true >= hazard_lower) & (hazard_true <= hazard_upper)),
-        cumu_cov = as.integer((cumu_true >= cumu_lower) & (cumu_true <= cumu_upper)),
-        surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
-  }
+  # if(ic_point != "mid_end") {
+  nd <- nd %>%
+    mutate(
+      loghazard_true = eval(parse(text = formula), envir = pick(everything())),
+      hazard_true = exp(loghazard_true),
+      cumu_true = cumsum(intlen * hazard_true),
+      surv_true = exp(-cumu_true)) %>%
+    add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
+    rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
+    add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+    rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
+    add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+    rename(cumu = cumu_hazard) %>%
+    add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+    rename(surv = surv_prob) %>%
+    mutate(
+      loghazard_cov = as.integer((loghazard_true >= loghazard_lower) & (loghazard_true <= loghazard_upper)),
+      hazard_cov = as.integer((hazard_true >= hazard_lower) & (hazard_true <= hazard_upper)),
+      cumu_cov = as.integer((cumu_true >= cumu_lower) & (cumu_true <= cumu_upper)),
+      surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
+  # } else {
+  #   nd2 <- nd %>%
+  #     mutate(
+  #       tmid = (tstart + tend) / 2,
+  #       intlen = tmid - tstart,
+  #       interval = paste0("(", tstart, ", ", tmid, "]"),
+  #       offset = log(intlen)) %>%
+  #     mutate(
+  #       loghazard_true = eval(parse(text = formula), envir = pick(everything())),
+  #       hazard_true = exp(loghazard_true),
+  #       cumu_true = cumsum(intlen * hazard_true),
+  #       surv_true = exp(-cumu_true)) %>%
+  #     rename(tend_original = tend, tend = tmid) %>%
+  #     add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default", type = "link") %>%
+  #     rename(loghazard = hazard, loghazard_lower = ci_lower, loghazard_upper = ci_upper) %>%
+  #     add_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+  #     rename(hazard_lower = ci_lower, hazard_upper = ci_upper) %>%
+  #     nd2 <- nd2 %>% add_cumu_hazard(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+  #     rename(cumu = cumu_hazard) %>%
+  #     add_surv_prob(mod, se_mult = qnorm(0.975), ci_type = "default") %>%
+  #     rename(surv = surv_prob) %>%
+  #     rename(tmid = tend, tend = tend_original) %>%
+  #     mutate(
+  #       loghazard_cov = as.integer((loghazard_true >= loghazard_lower) & (loghazard_true <= loghazard_upper)),
+  #       hazard_cov = as.integer((hazard_true >= hazard_lower) & (hazard_true <= hazard_upper)),
+  #       cumu_cov = as.integer((cumu_true >= cumu_lower) & (cumu_true <= cumu_upper)),
+  #       surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
+  # }
 
   nd <- nd %>%
+    mutate(
+      beta_true = beta_true,
+      beta_est = beta_est,
+      beta_se = beta_se,
+      beta_cov = beta_cov) %>%
     select(
       tstart, tend,
       loghazard, hazard, cumu, surv,
       loghazard_true, hazard_true, cumu_true, surv_true,
-      loghazard_cov, hazard_cov, cumu_cov, surv_cov)
+      loghazard_cov, hazard_cov, cumu_cov, surv_cov,
+      beta_true, beta_est, beta_se, beta_cov)
 
   return(nd)
 }
@@ -203,6 +226,15 @@ wrapper_cox <- function(
   formula_mod <- update(formula_ped, . ~ x1 + pspline(x2))
 
   mod <- coxph(formula = formula_mod, data = df)
+
+  # compute coverage for coefficient of x1
+  beta_true <- as.numeric(gsub("^.*?([+-]?\\s*\\d+\\.?\\d*)\\s*\\*?\\s*x1.*$", "\\1", gsub("\\s+", "", deparse(formula))))
+  summary_mod <- summary(mod)
+  beta_est <- summary_mod$coefficients["x1", "coef"]
+  beta_se <- coef(summary_mod)["x1", "se(coef)"]
+  ci_lower <- beta_est - 1.96 * beta_se
+  ci_upper <- beta_est + 1.96 * beta_se
+  beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
 
   # create new dataset exactly as specified
   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
@@ -264,24 +296,30 @@ wrapper_cox <- function(
       surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
 
   nd <- nd %>%
+    mutate(
+      beta_true = beta_true,
+      beta_est = beta_est,
+      beta_se = beta_se,
+      beta_cov = beta_cov) %>%
     select(
       tstart, tend,
       loghazard, hazard, cumu, surv,
       loghazard_true, hazard_true, cumu_true, surv_true,
-      loghazard_cov, hazard_cov, cumu_cov, surv_cov)
+      loghazard_cov, hazard_cov, cumu_cov, surv_cov,
+      beta_true, beta_est, beta_se, beta_cov)
 
   return(nd)
 }
 
 
-wrapper_generalizedGamma <- function(
+wrapper_weibull <- function(
   data,
   job,
   instance,
   ic_point = c("mid", "end", "true_time", "oracle", "adjustment")) {
 
   ic_point <- match.arg(ic_point)
-saveRDS(instance, "instance.rds")
+  saveRDS(instance, "instance.rds")
   df <- instance[[1]]
   formula <- instance[[2]]
 
@@ -304,18 +342,23 @@ saveRDS(instance, "instance.rds")
   if(ic_point != "adjustment") {
     # regular formula
     formula_mod <- update(formula_ped, . ~ x1 + pspline(x2))
+    df_mod <- df
   }  else {
     # interval-censored formula
     formula_mod <- Surv(time = time_ic_start, time2 = time_ic_stop, type = "interval2") ~ x1 + pspline(x2)
+    df_mod <- df %>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start))
   }
 
   # Model fitting
   mod <- tryCatch(
     withCallingHandlers(
       {
-        flexsurvreg(formula_mod, data = df, dist = "gengamma",
-                    inits = c(mu = log(median(df$time)), sigma = 0.5, Q = 1),
-                    method = "BFGS")
+        flexsurvreg(
+          formula = formula_mod,
+          data = df_mod%>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
+          dist = "weibull",
+          method = "BFGS",
+          inits = c(1, 1, 1))
       },
       warning = function(w) {
         message("Warning detected in BFGS: Falling back to Nelder-Mead")
@@ -324,11 +367,35 @@ saveRDS(instance, "instance.rds")
     ),
     error = function(e) {
       message("Error in BFGS: Falling back to Nelder-Mead")
-      flexsurvreg(formula_mod, data = df, dist = "gengamma",
-                  inits = c(mu = log(median(df$time)), sigma = 0.5, Q = 1),
-                  method = "Nelder-Mead")
+      flexsurvreg(
+        formula = formula_mod,
+        data = df_mod%>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
+        dist = "weibull",
+        method = "Nelder-Mead",
+        inits = c(1, 1, 1))
     }
   )
+
+  # compute coverage for coefficient of x1
+  beta_true <- as.numeric(gsub("^.*?([+-]?\\s*\\d+\\.?\\d*)\\s*\\*?\\s*x1.*$", "\\1", gsub("\\s+", "", deparse(formula))))
+
+  beta_x1_aft       <- mod$res["x1", "est"]
+  se_beta_x1_aft    <- mod$res["x1", "se"]
+  alpha             <- mod$res["shape", "est"]
+  se_log_alpha      <- mod$res.t["shape", "se"]
+  beta_est          <- -alpha * beta_x1_aft
+  cov_beta_logalpha <- mod$cov["x1", "shape"]
+  gradient          <- c(-alpha, -alpha * beta_x1_aft)
+  cov_submatrix <- matrix(
+    c(se_beta_x1_aft^2, cov_beta_logalpha,
+      cov_beta_logalpha, se_log_alpha^2),
+    nrow = 2
+  )
+  beta_var <- t(gradient) %*% cov_submatrix %*% gradient
+  beta_se  <- sqrt(beta_var[1, 1])
+  ci_lower <- beta_est - 1.96 * beta_se
+  ci_upper <- beta_est + 1.96 * beta_se
+  beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
 
   # new data preparation
   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
@@ -371,14 +438,142 @@ saveRDS(instance, "instance.rds")
       surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
 
   nd <- nd %>%
+    mutate(
+      beta_true = beta_true,
+      beta_est = beta_est,
+      beta_se = beta_se,
+      beta_cov = beta_cov) %>%
     select(
       tstart, tend,
       loghazard, hazard, cumu, surv,
       loghazard_true, hazard_true, cumu_true, surv_true,
-      loghazard_cov, hazard_cov, cumu_cov, surv_cov)
+      loghazard_cov, hazard_cov, cumu_cov, surv_cov,
+      beta_true, beta_est, beta_se, beta_cov)
 
   return(nd)
 }
+
+
+# wrapper_generalizedGamma <- function(
+#   data,
+#   job,
+#   instance,
+#   ic_point = c("mid", "end", "true_time", "oracle", "adjustment")) {
+
+#   ic_point <- match.arg(ic_point)
+
+#   df <- instance[[1]]
+#   formula <- instance[[2]]
+
+#   if(ic_point == "mid") {
+#     df <- df %>% mutate(time_ic_mid = (time_ic_start + time_ic_stop) / 2)
+#   }
+
+#   formula_ped <- case_when(
+#     ic_point == "mid" ~ "Surv(time_ic_mid, status_ic) ~ x1 + x2",
+#     ic_point %in% c("end", "adjustment") ~ "Surv(time_ic_stop, status_ic) ~ x1 + x2",
+#     ic_point %in% c("true_time", "oracle") ~ "Surv(time, status) ~ x1 + x2",
+#     TRUE ~ NA_character_
+#   ) %>% as.formula()
+
+#   ped <- as_ped(
+#     data = df,
+#     formula = formula_ped,
+#     id = "id")
+
+#   if(ic_point != "adjustment") {
+#     # regular formula
+#     formula_mod <- update(formula_ped, . ~ x1 + pspline(x2))
+#   }  else {
+#     # interval-censored formula
+#     formula_mod <- Surv(time = time_ic_start, time2 = time_ic_stop, type = "interval2") ~ x1 + pspline(x2)
+#   }
+
+#   # Model fitting
+#   mod <- tryCatch(
+#     withCallingHandlers(
+#       {
+#         flexsurvreg(formula_mod, data = df, dist = "gengamma",
+#                     inits = c(mu = log(median(df$time)), sigma = 0.5, Q = 1),
+#                     method = "BFGS")
+#       },
+#       warning = function(w) {
+#         message("Warning detected in BFGS: Falling back to Nelder-Mead")
+#         invokeRestart("muffleWarning")  # Prevents warning from propagating further
+#       }
+#     ),
+#     error = function(e) {
+#       message("Error in BFGS: Falling back to Nelder-Mead")
+#       flexsurvreg(formula_mod, data = df, dist = "gengamma",
+#                   inits = c(mu = log(median(df$time)), sigma = 0.5, Q = 1),
+#                   method = "Nelder-Mead")
+#     }
+#   )
+
+#   # compute coverage for coefficient of x1
+#   beta_true <- as.numeric(gsub("^.*?([+-]?\\s*\\d+\\.?\\d*)\\s*\\*?\\s*x1.*$", "\\1", gsub("\\s+", "", deparse(formula))))
+#   summary_mod <- summary(mod)
+#   beta_est <- 999 # placeholder
+#   beta_se <- 999
+#   ci_lower <- 999
+#   ci_upper <- 999
+#   beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
+
+#   # new data preparation
+#   formula <- paste(gsub("\\bt\\b", "tend", deparse(formula[[2]])))
+
+#   nd <- make_newdata(
+#     ped,
+#     tend = sort(unique(ped$tend)),
+#     x1 = median(df$x1),
+#     x2 = mean(df$x2)) %>%
+#     mutate(
+#       loghazard_true = eval(parse(text = formula), envir = pick(everything())),
+#       hazard_true = exp(loghazard_true),
+#       cumu_true = cumsum(intlen * hazard_true),
+#       surv_true = exp(-cumu_true)
+#     )
+
+#   # predictions from parametric model
+#   pred <- summary(mod, newdata = data.frame(x1 = median(df$x1), x2 = mean(df$x2)),
+#                   type = "hazard", t = nd$tend)
+
+#   nd <- nd %>%
+#     mutate(
+#       loghazard = log(pred[[1]]$est),
+#       loghazard_lower = log(pred[[1]]$lcl),
+#       loghazard_upper = log(pred[[1]]$ucl),
+#       hazard = pred[[1]]$est,
+#       hazard_lower = pred[[1]]$lcl,
+#       hazard_upper = pred[[1]]$ucl,
+#       cumu = cumsum(hazard * intlen),
+#       cumu_lower = cumsum(hazard_lower * intlen),
+#       cumu_upper = cumsum(hazard_upper * intlen),
+#       surv = exp(-cumu),
+#       surv_lower = exp(-cumu_upper),
+#       surv_upper = exp(-cumu_lower)
+#     ) %>%
+#     mutate(
+#       loghazard_cov = as.integer((loghazard_true >= loghazard_lower) & (loghazard_true <= loghazard_upper)),
+#       hazard_cov = as.integer((hazard_true >= hazard_lower) & (hazard_true <= hazard_upper)),
+#       cumu_cov = as.integer((cumu_true >= cumu_lower) & (cumu_true <= cumu_upper)),
+#       surv_cov =  as.integer((surv_true >= surv_lower) & (surv_true <= surv_upper)))
+
+#   nd <- nd %>%
+#     mutate(
+#       beta_true = beta_true,
+#       beta_est = beta_est,
+#       beta_se = beta_se,
+#       beta_cov = beta_cov) %>%
+#     select(
+#       tstart, tend,
+#       loghazard, hazard, cumu, surv,
+#       loghazard_true, hazard_true, cumu_true, surv_true,
+#       loghazard_cov, hazard_cov, cumu_cov, surv_cov,
+#       beta_true, beta_est, beta_se, beta_cov)
+
+#   return(nd)
+# }
 
 
 add_interval_censoring <- function(
@@ -502,6 +697,7 @@ calc_coverage <- function(data, grouping_vars = NULL, rounding = 3) {
 
   required_cols <- c(
     grouping_vars,
+    "job.id",
     "loghazard_cov", "hazard_cov", "cumu_cov", "surv_cov"
   )
 
@@ -539,6 +735,7 @@ calc_rmse <- function(data, grouping_vars = NULL, rounding = 3) {
 
   required_cols <- c(
     grouping_vars,
+    "job.id",
     "loghazard", "hazard", "cumu", "surv",
     "loghazard_true", "hazard_true", "cumu_true", "surv_true"
   )
@@ -581,7 +778,9 @@ calc_rmse <- function(data, grouping_vars = NULL, rounding = 3) {
 create_linePlot <- function(data, grouping_vars = NULL) {
 
   required_cols <- c(
-    grouping_vars, "tend", "loghazard", "loghazard_true", "job.id"
+    grouping_vars,
+    "job.id",
+    "tend", "loghazard", "loghazard_true"
   )
 
   if (!all(required_cols %in% colnames(data))) {
@@ -617,4 +816,37 @@ create_linePlot <- function(data, grouping_vars = NULL) {
   names(plots) <- unique_groups
 
   return(plots)
+}
+
+
+calc_coverage_beta <- function(data, grouping_vars = NULL, rounding = 3) {
+
+  required_cols <- c(
+    grouping_vars,
+    "job.id",
+    "beta_true", "beta_est", "beta_cov"
+  )
+
+  if (!all(required_cols %in% colnames(data))) {
+    stop("Data is missing required columns.")
+  }
+
+  jobLevel_results <- data %>%
+    {if(!is.null(grouping_vars))
+        group_by(., job.id, across(all_of(grouping_vars)))
+    else
+        group_by(., job.id)} %>%
+    select(all_of(required_cols)) %>%
+    slice_head(n = 1) %>%
+    mutate(beta_bias = beta_est - beta_true)
+
+  results <- jobLevel_results %>%
+    {if (!is.null(grouping_vars)) group_by(., across(all_of(grouping_vars))) else . } %>%
+    summarise(
+      `coverage beta` = round(mean(beta_cov, na.rm = TRUE), rounding),
+      `bias beta` = round(mean(beta_bias, na.rm = TRUE), rounding),
+      .groups = "drop"
+    )
+
+  return(kable(results))
 }
