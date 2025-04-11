@@ -1,33 +1,28 @@
-library(dplyr)
-library(ggplot2)
-theme_set(theme_bw())
-library(patchwork)
 library(batchtools)
 library(checkmate)
 
 # setup ----
-# devtools::install_github("adibender/pammtools")
-setwd("C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction")
-setwd("nvmetmp/wis37138/msm_kidneyFunction")
+dir_wd <- "C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction"
+# dir_wd <- "nvmetmp/wis37138/msm_kidneyFunction"
+setwd(dir_wd)
 source("code/helpers_ic.r")
 
-registry <- "results/sim-coverage-registry_baseline"
-dir_dataset <- "results/dataset/"
-dir_figures <- "results/figures/sim-coverage-results_baseline"
-repls <- 500
+registry <- file.path(dir_wd, "results/registries/sim-test")
+dir_dataset <- file.path(dir_wd, "results/dataset/")
+dir_figures <- file.path(dir_wd, "results/figures/sim-coverage-results_baseline")
+repls <- 2
 ncores <- 200
 formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6"
 formula_weibull <- "~ -3.5"
 
 # set.seed(11022022)
-formula_weibull <- "~ -3.5"
 # a <- wrapper_sim_pexp(data = NULL, job = NULL, n = 500, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "equidistant", round = 2)
-a_2 <- wrapper_sim_weibull(data = NULL, job = NULL, n = 500, formula = formula_weibull, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "beta", round = NULL)
+a_2 <- wrapper_sim_weibull(data = NULL, job = NULL, n = 500, formula = formula_weibull, time_grid = seq(0, 10, by = 0.05), ic = TRUE, visits_min = 99, visits_max = 100, ic_mechanism = "beta", round = NULL)
 # b <- wrapper_pam(data = a, job = NULL, instance = a, bs = "ps", k = 20, ic_point = "mid")
 b_2 <- wrapper_pam(data = a_2, job = NULL, instance = a_2, bs = "ps", k = 20, ic_point = "mid")
 # b_end <- wrapper_pam(data = a, job = NULL, instance = a, bs = "ps", k = 20, ic_point = "end")
 # # c <- wrapper_cox(data = a, job = NULL, instance = a, ic_point = "exact")
-# d <- wrapper_weibull(data = a, job = NULL, instance = a, ic_point = "end")
+d <- wrapper_weibull(data = a_2, job = NULL, instance = a_2, ic_point = "end", fct = "survreg")
 # # e <- wrapper_generalizedGamma(data = a, job = NULL, instance = a, ic_point = "end")
 
 
@@ -40,7 +35,6 @@ if (!test_directory_exists(registry)) {
     registry,
     packages = c("mgcv", "dplyr", "tidyr", "pammtools", "mvtnorm", "rlang"),
     seed     = 11022022)
-  reg <- loadRegistry(registry, writeable = TRUE)
 
   tryCatch({
     reg$cluster.functions = makeClusterFunctionsMulticore(ncpus = ncores)
@@ -69,8 +63,9 @@ if (!test_directory_exists(registry)) {
   algo_df_cox <- data.frame(
     ic_point = c("mid", "end", "exact", "oracle")
   )
-  algo_df_weibull <- data.frame(
-    ic_point = c("mid", "end", "exact", "oracle", "adjustment")
+  algo_df_weibull <- crossing(
+    ic_point = c("mid", "end", "exact", "oracle", "adjustment"),
+    fct = c("survreg", "flexsurvreg")
   )
   algo_df_generalizedGamma <- data.frame(
     ic_point = c("mid", "end", "exact", "oracle", "adjustment")
@@ -99,16 +94,16 @@ res     <- reduceResultsDataTable(ids=findDone(ids_res)) %>%
   as_tibble() %>%
   tidyr::unnest(cols = c(result)) %>%
   left_join(pars, by = "job.id")
-saveRDS(res, path_dataset)
+saveRDS(res, dir_dataset)
 
-grouping_vars <- c("problem", "algorithm", "ic_point", "ic_mechanism")
+grouping_vars <- c("problem", "algorithm", "ic_point", "ic_mechanism", "fct")
 
 # coverage overall ----
 res <- readRDS("results/datasets/sim-coverage-results_baseline.rds")
 coverage <- calc_coverage(data = res, grouping_vars = grouping_vars)
 coverage
 View(coverage %>%
-  filter(problem == "sim_weibull" & ic_mechanism=="beta" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
+  filter(problem == "sim_weibull" & ic_mechanism=="equidistant" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
   select(-c(ic_mechanism, problem, `coverage loghazard`)))
 
 # RMSE ----
@@ -125,10 +120,10 @@ for(i in 1:length(linePlot)) {
 }
 
 # coverage and bias x1 ----
-res <- readRDS("results/datasets/sim-coverage-results_covariate.rds")
-coverage_x1 <- calc_coverage_beta(data = res, grouping_vars = grouping_vars)
+res_x1 <- readRDS("results/datasets/sim-coverage-results_covariate.rds")
+coverage_x1 <- calc_coverage_beta(data = res_x1, grouping_vars = grouping_vars)
 coverage_x1
 
 View(coverage_x1 %>%
-  filter(problem == "sim_pexp" & ic_mechanism=="equidistant" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
+  filter(problem == "sim_pexp" & ic_mechanism=="beta" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
   select(-c(ic_mechanism, problem)))

@@ -11,6 +11,8 @@ library(mgcv)
 library(pammtools)
 library(flexsurv)
 library(ggplot2)
+theme_set(theme_bw())
+library(patchwork)
 
 # data prep ----
 wrapper_sim_pexp <- function(
@@ -107,8 +109,8 @@ wrapper_sim_weibull <- function(
     ndf <- add_interval_censoring(
       ndf,
       max_time = max(ndf$time),
-      visits_min = 1,
-      visits_max = 10,
+      visits_min = visits_min,
+      visits_max = visits_max,
       ic_mechanism = ic_mechanism,
       round = round
     ) %>%
@@ -616,9 +618,12 @@ wrapper_weibull <- function(
   data,
   job,
   instance,
-  ic_point = c("mid", "end", "exact", "oracle", "adjustment")) {
+  ic_point = c("mid", "end", "exact", "oracle", "adjustment"),
+  fct = c("flexsurvreg", "survreg")
+  ) {
 
   ic_point <- match.arg(ic_point)
+  fct <- match.arg(fct)
 
   df <- instance[[1]]
   formula <- instance[[2]]
@@ -676,52 +681,67 @@ wrapper_weibull <- function(
   }
 
   # Model fitting
-  mod <- tryCatch(
-    withCallingHandlers(
-      {
+  if(fct == "flexsurvreg") {
+    mod <- tryCatch(
+      withCallingHandlers(
+        {
+          flexsurvreg(
+            formula = formula_mod,
+            data = df_mod %>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
+            dist = "weibull",
+            method = "BFGS",
+            inits = c(1, 1, 1))
+        },
+        warning = function(w) {
+          message("Warning detected in BFGS: Falling back to Nelder-Mead")
+          invokeRestart("muffleWarning")  # Prevents warning from propagating further
+        }
+      ),
+      error = function(e) {
+        message("Error in BFGS: Falling back to Nelder-Mead")
         flexsurvreg(
           formula = formula_mod,
-          data = df_mod%>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
+          data = df_mod %>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
           dist = "weibull",
-          method = "BFGS",
+          method = "Nelder-Mead",
           inits = c(1, 1, 1))
-      },
-      warning = function(w) {
-        message("Warning detected in BFGS: Falling back to Nelder-Mead")
-        invokeRestart("muffleWarning")  # Prevents warning from propagating further
       }
-    ),
-    error = function(e) {
-      message("Error in BFGS: Falling back to Nelder-Mead")
-      flexsurvreg(
-        formula = formula_mod,
-        data = df_mod%>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
-        dist = "weibull",
-        method = "Nelder-Mead",
-        inits = c(1, 1, 1))
-    }
-  )
+    )
+  } else {
+    mod <- survreg(
+      formula = formula_mod,
+      data = df_mod %>% mutate(time_ic_start = ifelse(time_ic_start==0, 1e-6, time_ic_start)),
+      dist = "weibull")
+  }
 
   # compute coverage for coefficient of x1
   if(x_flag){
+
     beta_true <- as.numeric(gsub("^.*?([+-]?\\s*\\d+\\.?\\d*)\\s*\\*?\\s*x1.*$", "\\1", gsub("\\s+", "", deparse(formula))))
-    beta_x1_aft       <- mod$res["x1", "est"]
-    se_beta_x1_aft    <- mod$res["x1", "se"]
-    alpha             <- mod$res["shape", "est"]
-    se_log_alpha      <- mod$res.t["shape", "se"]
-    beta_est          <- -alpha * beta_x1_aft
-    cov_beta_logalpha <- mod$cov["x1", "shape"]
-    gradient          <- c(-alpha, -alpha * beta_x1_aft)
-    cov_submatrix <- matrix(
-      c(se_beta_x1_aft^2, cov_beta_logalpha,
-        cov_beta_logalpha, se_log_alpha^2),
-      nrow = 2
-    )
-    beta_var <- t(gradient) %*% cov_submatrix %*% gradient
-    beta_se  <- sqrt(beta_var[1, 1])
-    ci_lower <- beta_est - 1.96 * beta_se
-    ci_upper <- beta_est + 1.96 * beta_se
-    beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
+
+    if(fct == "flexsurvreg") {
+      beta_x1_aft       <- mod$res["x1", "est"]
+      se_beta_x1_aft    <- mod$res["x1", "se"]
+      alpha             <- mod$res["shape", "est"]
+      se_log_alpha      <- mod$res.t["shape", "se"]
+      beta_est          <- -alpha * beta_x1_aft
+      cov_beta_logalpha <- mod$cov["x1", "shape"]
+      gradient          <- c(-alpha, -alpha * beta_x1_aft)
+      cov_submatrix <- matrix(
+        c(se_beta_x1_aft^2, cov_beta_logalpha,
+          cov_beta_logalpha, se_log_alpha^2),
+        nrow = 2
+      )
+      beta_var <- t(gradient) %*% cov_submatrix %*% gradient
+      beta_se  <- sqrt(beta_var[1, 1])
+      ci_lower <- beta_est - 1.96 * beta_se
+      ci_upper <- beta_est + 1.96 * beta_se
+      beta_cov <- ifelse(beta_true >= ci_lower && beta_true <= ci_upper, 1, 0)
+
+    } else {
+      stop("survreg not implemented yet for coverage of covariates")
+    }
+
   } else {
     beta_true <- NA
     beta_est <- NA
@@ -754,13 +774,38 @@ wrapper_weibull <- function(
 
   # predictions from parametric model
   if(x_flag) {
-    newdata_pred <- data.frame(x1=median(df$x1), x2=mean(df$x2))
-    pred <- summary(mod, newdata = newdata_pred,
-                    type = "hazard", t = nd$tend)
+    newdata_pred <- data.frame(x1 = median(df$x1), x2 = mean(df$x2))
+    if(fct == "flexsurvreg") {
+      pred <- summary(mod, newdata = newdata_pred,
+                      type = "hazard", t = nd$tend)
+    } else {
+      # For survreg: compute hazard manually
+      # Get linear predictor and sigma
+      lp <- predict(mod, newdata = newdata_pred, type = "lp")
+      sigma <- mod$scale
+      a <- 1/sigma        # shape parameter
+      lambda <- exp(lp)   # scale parameter
+      # Compute hazard at each time point in nd$tend
+      hazard <- (a / lambda) * (nd$tend / lambda)^(a - 1)
+      # Note: Without additional delta-method calculations, we do not get SE/CI.
+      # For consistency downstream, we create a list with est, lcl, and ucl all equal to hazard.
+      pred <- list(list(est = hazard,
+                        lcl = hazard,  # placeholder: no CI available for survreg predictions here
+                        ucl = hazard))
+    }
   } else {
-    newdata_pred <- data.frame(x1=0, x2=0)
-    pred <- summary(mod, newdata = newdata_pred,
-                    type = "hazard", t = nd$tend)
+    newdata_pred <- data.frame(x1 = 0, x2 = 0)
+    if(fct == "flexsurvreg") {
+      pred <- summary(mod, newdata = newdata_pred,
+                      type = "hazard", t = nd$tend)
+    } else {
+      lp <- predict(mod, newdata = newdata_pred, type = "lp")
+      sigma <- mod$scale
+      a <- 1/sigma
+      lambda <- exp(lp)
+      hazard <- (a / lambda) * (nd$tend / lambda)^(a - 1)
+      pred <- list(list(est = hazard, lcl = hazard, ucl = hazard))
+    }
   }
 
   nd <- nd %>%

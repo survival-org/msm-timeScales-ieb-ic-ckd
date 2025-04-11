@@ -1,2 +1,2 @@
-results/**/*registry/
-results/**/*datasets/
+results/registries
+results/datasets

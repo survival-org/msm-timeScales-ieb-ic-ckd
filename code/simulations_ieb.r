@@ -4,10 +4,12 @@ library(checkmate)
 # setup ----
 ## general
 setwd("C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction")
-devtools::load_all("C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/pammtools")
+# setwd("nvmetmp/wis37138/msm_kidneyFunction")
 source("code/helpers_ieb.r")
-registry <- "results/sim-ieb-registry"
-repls <- 2
+registry <- "results/registries/sim-ieb-registry"
+dir_datasets <- "C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction/results/datasets/"
+dir_figures <- "C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction/results/figures/"
+repls <- 500
 ncores <- 200
 
 # experiment ----
@@ -33,19 +35,21 @@ if (!test_directory_exists(registry)) {
   prob_df <- data.frame(
     cens_type = c("none")
   )
-  # algo_df_msm <- data.frame(
-  #   # TBD
-  # )
-  # algo_df_cor <- data.frame(
-  #   # TBD
-  # )
+  algo_df_msm <- data.frame(
+    formula = c(
+      "ped_status ~ s(tend, by=transition) + transition + x1*transition",
+      "ped_status ~ s(tend, by=transition) + transition + x1*transition + x2*transition"
+    )
+  )
+  algo_df_cor <- data.frame(
+  )
 
   addExperiments(
     prob.designs = list(sim = prob_df),
-    # algo.designs  = list(
-    #   msm = algo_df_msm,
-    #   cor = algo_df_cor
-    # ),
+    algo.designs  = list(
+      msm = algo_df_msm,
+      cor = algo_df_cor
+    ),
     repls = repls)
 
   submitJobs(ids = findNotDone())
@@ -62,11 +66,64 @@ res_msm <- reduceResultsDataTable(ids = ids_res_msm) %>%
   as_tibble() %>%
   unnest(cols = c(result)) %>%
   left_join(pars_msm, by = "job.id")
+saveRDS(res_msm, paste0(dir_datasets, "sim-ieb-results_msm.rds"))
+saveRDS(res_msm, "/nvmetmp/wis37138/msm_kidneyFunction/results/datasets/sim-ieb-results_msm.rds")
 
 res_cor <- reduceResultsDataTable(ids = ids_res_cor) %>%
   as_tibble() %>%
   unnest(cols = c(result)) %>%
   left_join(pars_cor, by = "job.id")
+saveRDS(res_cor, paste0(dir_datasets, "sim-ieb-results_cor.rds"))
+
+# interpretation ----
+
+## coverage bias ----
+res_msm <- readRDS(paste0(dir_datasets, "sim-ieb-results_msm.rds"))
+
+coverage_bias <- calc_coverage_bias(res_msm)
+coverage_bias
+
+unadj_onset <- res_msm %>%
+  filter(!grepl("x2", formula)) %>%
+  filter(grepl("onset", transition))
+
+unadj_progression <- res_msm %>%
+  filter(!grepl("x2", formula)) %>%
+  filter(grepl("progression", transition))
+
+adj_onset <- res_msm %>%
+  filter(grepl("x2", formula)) %>%
+  filter(grepl("onset", transition))
+
+adj_progression <- res_msm %>%
+  filter(grepl("x2", formula)) %>%
+  filter(grepl("progression", transition))
+
+df_list <- list(
+  unadj_onset = unadj_onset,
+  unadj_progression = unadj_progression,
+  adj_onset = adj_onset,
+  adj_progression = adj_progression
+)
+
+for(i in 1:length(df_list)) {
+  df <- df_list[[i]]
+  p <- ggplot(df, aes(x = coefficient)) +
+    geom_histogram(bins = 30) +
+    labs(x = "Coefficient",
+         y = "Frequency") +
+    theme_minimal()
+  ggsave(paste0(dir_figures, "sim-ieb-results/", names(df_list)[i], ".png"), p, width = 8, height = 5)
+}
+
+## correlation ----
+res_cor <- readRDS(paste0(dir_datasets, "sim-ieb-results_cor.rds"))
+
+res_cor %>% filter(var1=="x1" & var2=="x2") %>%
+  group_by(from) %>%
+  summarise(
+    correlation = mean(rho)
+  )
 
 # testing ----
 ## simulation parameters
