@@ -212,21 +212,21 @@ f0 <- function(t) {
 }
 plot(x=seq(0,3,0.01), y=f0(seq(0,3,0.01)), type="l")
 
-# formulas_list <- list(
-#     trans_0_1 = ~ 0.2 + f0(t),
-#     trans_0_death = ~ 0.1 + f0(t) + 0.5*x1**2,
-#     # trans_1_2 = ~ 0.1 + 0.25*x1**3 + 0.5*x2 + 0.5*f0(t),
-#     trans_1_death = ~ 0.4 + 0.7*x1**2
-#     # trans_2_3 = ~ 0.3 + 0.25*x1**2 + 0.5*x2 + 0.3*x3 + 0.25*f0(t),
-#     # trans_2_death = ~ f0(t)
-# )
 formulas_list <- list(
-  list(from = 0, to = 1, formula = ~ -4.5 + f0(t)),
-  list(from = 0, to = "death", formula = ~ -3.0 + f0(t) + 0.5*x1**2),
-  list(1, "death", ~ -2.1 + 0.7*x1**2)
+    list(0, 1, ~ 0.2 + f0(t)),
+    list(0, 4, ~ 0.1 + f0(t) + 0.5*x1**2),
+    list(1, 2, ~ 0.1 + 0.25*x1**3 + 0.5*x2 + 0.5*f0(t)),
+    list(1, 4, ~ 0.4 + 0.7*x1**2),
+    list(2, 3, ~ 0.3 + 0.25*x1**2 + 0.5*x2 + 0.3*x3 + 0.25*f0(t)),
+    list(2, 4, ~ f0(t))
 )
+# formulas_list <- list(
+#   list(from = 0, to = 1, formula = ~ -4.5 + f0(t)),
+#   list(from = 0, to = "death", formula = ~ -3.0 + f0(t) + 0.5*x1**2),
+#   list(1, "death", ~ -2.1 + 0.7*x1**2)
+# )
 
-terminal_states <- c(3, "death")
+terminal_states <- c(3, 4)
 cut =  seq(0, 3, by = 0.01)
 
 n = 2500

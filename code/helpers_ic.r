@@ -47,6 +47,52 @@ wrapper_sim_pexp <- function(
   return(out)
 }
 
+wrapper_sim_icenReg <- function(
+  data,
+  job,
+  n = 500,
+  scale = 4,
+  shape = 1,
+  inspections = 2,
+  inspectLength = 2.5,
+  round = NULL,
+  max_time = 10) {
+
+  ndf <- simIC_weib(
+    n = n,
+    b1 = 0,
+    b2 = 0,
+    model = "ph",
+    shape = shape,
+    scale = scale,
+    inspections = inspections,
+    inspectLength = inspectLength,
+    rndDigits = round,
+    prob_cen = 1
+  ) %>%
+    filter(l <= max_time) %>%
+    mutate(
+      status = ifelse(time > max_time, 0, 1),
+      u = ifelse(u == Inf, l, u),
+      status_ic = ifelse(time > max_time | l == u, 0, 1),
+      time = ifelse(time > max_time, max_time, time),
+    ) %>%
+    rename(
+      time_ic_start = l,
+      time_ic_stop = u
+    )
+
+  formula_call <- substitute(
+    ~ log(alpha) - log(sigma) + (alpha - 1) * (log(t) - log(sigma)),
+    list(alpha = shape, sigma = scale)
+  )
+  formula <- as.formula(formula_call)
+
+  out <- list(ndf, formula)
+
+  return(out)
+}
+
 wrapper_sim_weibull <- function(
   data,
   job,
@@ -260,6 +306,63 @@ add_interval_censoring <- function(
   final_data <- bind_cols(data, interval_data_df)
 
   return(final_data)
+}
+
+simIC_weib <- function (n = 100, b1 = 0.5, b2 = -0.5, model = "ph", shape = 2,
+    scale = 2, inspections = 2, inspectLength = 2.5, rndDigits = NULL,
+    prob_cen = 1){
+    rawQ <- runif(n)
+    x1 <- runif(n, -1, 1)
+    x2 <- 1 - 2 * rbinom(n, 1, 0.5)
+    nu <- exp(x1 * b1 + x2 * b2)
+    if (model == "ph")
+        adjFun <- function(x, nu) {
+            1 - x^(1/nu)
+        }
+    else if (model == "po")
+        adjFun <- function(x, nu) {
+            1 - x * (1/nu)/(x * 1/nu - x + 1)
+        }
+    adjQ <- adjFun(rawQ, nu)
+    trueTimes <- qweibull(adjQ, shape = shape, scale = scale)
+    obsTimes <- runif(n = n, max = inspectLength)
+    if (!is.null(rndDigits))
+        obsTimes <- round(obsTimes, rndDigits)
+    l <- rep(0, n)
+    u <- rep(0, n)
+    caught <- trueTimes < obsTimes
+    u[caught] <- obsTimes[caught]
+    l[!caught] <- obsTimes[!caught]
+    if (inspections > 1) {
+        for (i in 2:inspections) {
+            oldObsTimes <- obsTimes
+            obsTimes <- oldObsTimes + runif(n, max = inspectLength)
+            if (!is.null(rndDigits))
+                obsTimes <- round(obsTimes, rndDigits)
+            caught <- trueTimes >= oldObsTimes & trueTimes <
+                obsTimes
+            needsCatch <- trueTimes > obsTimes
+            u[caught] <- obsTimes[caught]
+            l[needsCatch] <- obsTimes[needsCatch]
+        }
+    }
+    else {
+        needsCatch <- !caught
+    }
+    u[needsCatch] <- Inf
+    if (sum(l > u) > 0)
+        stop("warning: l > u! Bug in code")
+    # isCensored <- rbinom(n = n, size = 1, prob = prob_cen) ==
+    #     1
+    # l[!isCensored] <- trueTimes[!isCensored]
+    # u[!isCensored] <- trueTimes[!isCensored]
+    if (sum(l == Inf) > 0) {
+        allTimes <- c(l, u)
+        allFiniteTimes <- allTimes[allTimes < Inf]
+        maxFiniteTime <- max(allFiniteTimes)
+        l[l == Inf] <- maxFiniteTime
+    }
+    return(data.frame(l = l, u = u, time = trueTimes, x1 = x1, x2 = x2))
 }
 
 # algorithms ----
@@ -652,10 +755,10 @@ wrapper_weibull <- function(
       mutate(
         # Ensure a minimal positive start if zero
         time_ic_start = ifelse(time_ic_start == 0, 1e-6, time_ic_start),
-        # For right-censored individuals (status == 0), use the last observed time as the start
-        time_ic_start = ifelse(status == 0, time_ic_stop, time_ic_start),
+        # For right-censored individuals according to IC scheme, use the last observed time as the start
+        time_ic_start = ifelse(status_ic == 0, time_ic_stop, time_ic_start),
         # And set the upper limit to Inf
-        time_ic_stop  = ifelse(status == 0, Inf, time_ic_stop)
+        time_ic_stop  = ifelse(status_ic == 0, Inf, time_ic_stop)
       )
   } else {
     df_mod <- df
@@ -881,10 +984,10 @@ wrapper_generalizedGamma <- function(
       mutate(
         # Ensure a minimal positive start if zero
         time_ic_start = ifelse(time_ic_start == 0, 1e-6, time_ic_start),
-        # For right-censored individuals (status == 0), use the last observed time as the start
-        time_ic_start = ifelse(status == 0, time_ic_stop, time_ic_start),
+        # For right-censored individuals according to IC scheme, use the last observed time as the start
+        time_ic_start = ifelse(status_ic == 0, time_ic_stop, time_ic_start),
         # And set the upper limit to Inf
-        time_ic_stop  = ifelse(status == 0, Inf, time_ic_stop)
+        time_ic_stop  = ifelse(status_ic == 0, Inf, time_ic_stop)
       )
   } else {
     df_mod <- df
@@ -1216,7 +1319,14 @@ calc_rmse <- function(data, grouping_vars = NULL, rounding = 3) {
 }
 
 
-create_linePlot <- function(data, grouping_vars = NULL) {
+create_linePlot <- function(
+  data,
+  grouping_vars = NULL,
+  scale = c("loghazard", "hazard", "cumulativehazard", "survivalfunction"),
+  font_size = 14,
+  alpha = 1) {
+
+  match.arg(scale)
 
   required_cols <- c(
     grouping_vars,
@@ -1246,29 +1356,53 @@ create_linePlot <- function(data, grouping_vars = NULL) {
     df_grp <- plot_data %>% filter(grouping == grp)
 
     # Decide line type based on group name
-    chosen_line_type <- ifelse(grepl("sim_weibull_weibull|sim_weibull_generalizedGamma|sim_pexp_weibull|sim_pexp_generalizedGamma", grp),
+    chosen_line_type <- ifelse(grepl("sim_weibull_weibull|sim_weibull_generalizedGamma|sim_pexp_weibull|sim_pexp_generalizedGamma|sim_icenReg_weibull|sim_icenReg_generalizedGamma", grp),
                    "smooth", "step")
 
     # Base ggplot
-    p <- ggplot(df_grp, aes(x = tend, y = loghazard))
+    if(scale == "loghazard"){
+      p <- ggplot(df_grp, aes(x = tend, y = loghazard))
+      truth <- geom_line(aes(y = loghazard_true, col = "truth"), lwd = 1.5)
+      ylab <- "loghazard"
+    } else if(scale == "hazard"){
+      p <- ggplot(df_grp, aes(x = tend, y = hazard))
+      truth <- geom_line(aes(y = hazard_true, col = "truth"), lwd = 1.5)
+      ylab <- "hazard"
+    } else if(scale == "cumulativehazard"){
+      p <- ggplot(df_grp, aes(x = tend, y = cumu))
+      truth <- geom_line(aes(y = cumu_true, col = "truth"), lwd = 1.5)
+      ylab <- "cumulative hazard"
+    } else if(scale == "survivalfunction"){
+      p <- ggplot(df_grp, aes(x = tend, y = surv))
+      truth <- geom_line(aes(y = surv_true, col = "truth"), lwd = 1.5)
+      ylab <- "survival function"
+    }
 
     # Draw lines for each job.id according to chosen_line_type
     if (chosen_line_type == "step") {
-      p <- p + geom_step(aes(group = job.id), alpha = 0.3)
+      p <- p + geom_step(aes(group = job.id), alpha = alpha)
     } else {
-      p <- p + geom_line(aes(group = job.id), alpha = 0.3)
+      p <- p + geom_line(aes(group = job.id), alpha = alpha)
     }
 
     # Add the true loghazard curve and the GAM-based average estimate
     p +
-      geom_line(aes(y = loghazard_true, col = "truth"), lwd = 1.5) +
+      truth +
       geom_smooth(aes(col = "average estimate"), method = "gam",
-                  formula = y ~ s(x), se = FALSE) +
+            formula = y ~ s(x), se = FALSE) +
       scale_color_brewer("", palette = "Dark2") +
       xlab("time") +
-      ylab("loghazard") +
+      ylab(ylab) +
       ggtitle(paste("Group:", grp)) +
-      theme_bw()
+      theme_bw() +
+      theme(
+      legend.position.within = c(0.05, 0.95),
+      legend.justification = c("left", "top"),
+      legend.text = element_text(size = font_size),
+      legend.title = element_text(size = font_size),
+      axis.text = element_text(size = font_size),
+      axis.title = element_text(size = font_size)
+      )
   })
 
   names(plots) <- unique_groups
