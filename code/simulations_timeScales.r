@@ -11,17 +11,17 @@ source("code/helpers_timeScales.r")
 registry <- "results/simulations/registries/sim-timeScales-registry"
 dir_datasets <- "/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/datasets/"
 dir_figures <- "/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/figures/timeScales/"
-repls <- 1000
+repls <- 500
 ncores <- 200
 seed <- 11022022
 
 # simulation parameters ----
 
 ## DGP parameters and formulas ----
-f_0         <- function(t) 0.02 * t^2 / (1 + 0.05 * pmax(0, t - 8)^2)
-g_0         <- function(t) 0.005 * t^3
+f_0         <- function(t) 0.10 * t^2 / (0.7 + 0.04 * pmax(0, t - 3)^3)
+g_0         <- function(t) 0.15 * t^2 / (0.9 + 0.01 * pmax(0, t - 1)^3)
 f_1         <- function(t) 0.32 * exp(-0.15 * t)
-f_until_1   <- function(t) 1.30 * exp(-0.60 * t)
+f_until_1   <- function(t) 2.50 * exp(-0.60 * t)
 g_1         <- function(t) 0.14 * exp(-0.25 * t)
 g_until_1   <- function(t) 0.14 * exp(-0.25 * t)
 
@@ -30,17 +30,17 @@ f_0_3 <- g_0
 f_1_2 <- function(t) 0.48 * exp(-0.10 * t)
 f_1_3 <- function(t) 0.16 * exp(-0.30 * t)
 
-delta_0   <- -0.7 # to achieve desired type I censoring rate
+delta_0   <- -1.0 # to achieve desired type I censoring rate
 
-beta_0_01 <- -1.8 + delta_0
-beta_0_03 <- -3.9 + delta_0
-beta_0_12 <- -5.5 + delta_0
-beta_0_13 <- -0.6 + delta_0
+beta_0_01 <- -2.9 + delta_0
+beta_0_03 <- -3 + delta_0
+beta_0_12 <- -2.4 + delta_0
+beta_0_13 <- -2.4 + delta_0
 
-beta_1_01 <- 0.0 # inspired by smoking
-beta_1_03 <- 1.0
-beta_1_12 <- 0.5
-beta_1_13 <- 1.0
+beta_1_01 <- 0.2
+beta_1_03 <- 0.1
+beta_1_12 <- 0.2
+beta_1_13 <- 0.1
 
 formulas_dgp_timeScales_fe <- list(
   list(from = 0, to = 1,
@@ -50,17 +50,17 @@ formulas_dgp_timeScales_fe <- list(
   list(
     from = 0, to = 3,
     formula = ~
-      g_0(tend) + beta_0_01 + beta_1_03 * x1
+      g_0(tend) + beta_0_03 + beta_1_03 * x1
   ),
   list(
     from = 1, to = 2,
     formula = ~
-      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_01 + beta_1_12 * x1
+      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_12 + beta_1_12 * x1
   ),
   list(
     from = 1, to = 3,
     formula = ~
-      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_01 + beta_1_13 * x1
+      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_13 + beta_1_13 * x1
   )
 )
 
@@ -72,17 +72,17 @@ formulas_dgp_stratified_fe <- list(
   list(
     from = 0, to = 3,
     formula = ~
-      f_0_3(tend) + beta_0_01 + beta_1_03 * x1
+      f_0_3(tend) + beta_0_03 + beta_1_03 * x1
   ),
   list(
     from = 1, to = 2,
     formula = ~
-      f_1_2(tend) + beta_0_01 + beta_1_12 * x1
+      f_1_2(tend) + f_until_1(t_until_1) +  beta_0_12 + beta_1_12 * x1
   ),
   list(
     from = 1, to = 3,
     formula = ~
-      f_1_3(tend) + beta_0_01 + beta_1_13 * x1
+      f_1_3(tend) + g_until_1(t_until_1) + beta_0_13 + beta_1_13 * x1
   )
 )
 
@@ -94,17 +94,17 @@ formulas_dgp_timeScales_bh <- list(
   list(
     from = 0, to = 3,
     formula = ~
-      g_0(tend) + beta_0_01
+      g_0(tend) + beta_0_03
   ),
   list(
     from = 1, to = 2,
     formula = ~
-      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_01
+      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_12
   ),
   list(
     from = 1, to = 3,
     formula = ~
-      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_01
+      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_13
   )
 )
 
@@ -116,17 +116,17 @@ formulas_dgp_stratified_bh <- list(
   list(
     from = 0, to = 3,
     formula = ~
-      f_0_3(tend) + beta_0_01
+      f_0_3(tend) + beta_0_03
   ),
   list(
     from = 1, to = 2,
     formula = ~
-      f_1_2(tend) + beta_0_01
+      f_1_2(tend) + f_until_1(t_until_1) + beta_0_01
   ),
   list(
     from = 1, to = 3,
     formula = ~
-      f_1_3(tend) + beta_0_01
+      f_1_3(tend) + f_until_1(t_until_1) + beta_0_01
   )
 )
 
@@ -134,7 +134,7 @@ formulas_dgp_stratified_bh <- list(
 cut <- seq(0, 10, by = 0.1)
 terminal_states <- c(2, 3)
 n <- 5000
-round <- 1
+round <- 2
 cens_type <- "right"
 cens_dist <- "weibull"
 cens_params <- c(1.5, 10.0) # shape, scale
@@ -202,12 +202,12 @@ formula_mod_stratified_bh <- ped_status ~
 #   cens_dist = cens_dist, cens_params = cens_params)
 # fe_instance <- wrapper_fe(
 #   data = sim_statics$timeScales_fe, job = NULL, instance = instance, formula = formula_mod_timeScales_fe)
-instance <- wrapper_sim(
-  data = sim_statics$timeScales_fe, job = NULL, formulas_dgp = formulas_dgp_timeScales_fe, terminal_states, cut, n = n, round = round, cens_type = cens_type,
-  cens_dist = cens_dist, cens_params = cens_params)
-a <- wrapper_fe(data = sim_statics$timeScales_fe, job = NULL, instance = instance, formula = formula_mod_timeScales_fe, bs_0 = bs_0, bs = "ps", k = k)
-b <- wrapper_bh(
-  data = sim_statics$timeScales_bh, job = NULL, instance = instance, formula = formula_mod_timeScales_bh, bs_0 = "ps", bs = "ps", k = k, ci = TRUE)
+# instance <- wrapper_sim(
+#   data = sim_statics$timeScales_fe, job = NULL, formulas_dgp = formulas_dgp_timeScales_fe, terminal_states, cut, n = n, round = round, cens_type = cens_type,
+#   cens_dist = cens_dist, cens_params = cens_params)
+# a <- wrapper_fe(data = sim_statics$timeScales_fe, job = NULL, instance = instance, formula = formula_mod_timeScales_fe, bs_0 = bs_0, bs = "ps", k = k)
+# b <- wrapper_bh(
+#   data = sim_statics$timeScales_bh, job = NULL, instance = instance, formula = formula_mod_timeScales_bh, bs_0 = "ps", bs = "ps", k = k, ci = TRUE)
 
 # experiment ----
 if (test_directory_exists(registry)) {
@@ -411,7 +411,6 @@ reg <- loadRegistry(registry, writeable = TRUE)
 
 ## fixed effects ----
 ids_fe <- findExperiments(algo.name = "fe", reg = reg)
-
 pars_fe <- unwrap(getJobPars(reg = reg)) %>%
   as_tibble()
 
@@ -425,7 +424,6 @@ res_fe <- readRDS(file.path(dir_datasets, "sim-timeScales-results_fe.rds"))
 
 ## baseline hazards ----
 ids_bh <- findExperiments(algo.name = "bh", reg = reg)
-
 pars_bh <- unwrap(getJobPars(reg = reg)) %>%
   as_tibble()
 
@@ -482,17 +480,23 @@ linePlots <- expand_grid(trans = line_trans, scale = scales) |>
 
 num_cores <- min(length(linePlots), parallel::detectCores())
 registerDoParallel(cores = num_cores)
-if (!dir.exists(dir_figures)) {
-  dir.create(dir_figures, recursive = TRUE)
+if (!dir.exists(file.path(dir_figures, "line_and_slice_plots"))) {
+  dir.create(file.path(dir_figures, "line_and_slice_plots"), recursive = TRUE)
 }
-foreach(nm = names(linePlots), .packages = "ggplot2") %dopar% {
+start_time <- Sys.time()
+foreach(nm = names(linePlots), .packages = c("ggplot2", "ragg")) %dopar% {
   ggsave(
-    filename = file.path(dir_figures, paste0(nm, ".png")),
+    filename = file.path(dir_figures, "line_and_slice_plots", paste0(nm, ".png")),
     plot     = linePlots[[nm]],
-    width    = 10, height = 8
+    width    = 10, height = 8,
+    device   = ragg::agg_png
   )
 }
+end_time <- Sys.time()
+print(paste("Total time for line plots (in minutes):", as.numeric(difftime(end_time, start_time, units = "mins"))))
 stopImplicitCluster()
+
+### CONTINUE HERE; BY CHECKING IF LINEPLOTS EXISTS
 
 ## slice plots for 1->2 and 1->3 transitions ----
 slice_trans  <- c("1->2", "1->3")
@@ -518,92 +522,97 @@ slicePlots <- expand_grid(trans = slice_trans, scale = scales) |>
 
 num_cores <- min(length(slicePlots), parallel::detectCores())
 registerDoParallel(cores = num_cores)
-if (!dir.exists(dir_figures)) {
-  dir.create(dir_figures, recursive = TRUE)
+if (!dir.exists(file.path(dir_figures, "line_and_slice_plots"))) {
+  dir.create(file.path(dir_figures, "line_and_slice_plots"), recursive = TRUE)
 }
+start_time <- Sys.time()
 foreach(nm = names(slicePlots), .packages = "ggplot2") %dopar% {
-  ggsave(
-    filename = file.path(dir_figures, paste0(nm, ".png")),
-    plot     = slicePlots[[nm]],
-    width    = 10, height = 8
+
+  filename <- file.path(dir_figures, "line_and_slice_plots", paste0(nm, ".png"))
+
+  if (file.exists(filename = filename)) {
+    return(NULL)
+  } else {
+    ggsave(
+      filename = filename,
+      plot     = slicePlots[[nm]],
+      width    = 10, height = 8,
+      device   = ragg::agg_png
   )
+  }
+
 }
+end_time <- Sys.time()
+print(paste("Total time for line plots (in minutes):", as.numeric(difftime(end_time, start_time, units = "mins"))))
 stopImplicitCluster()
 
+## fixed effect coverage plots ----
+
+algo_levels  <- c("algo_timeScales", "algo_stratified")   # left → right
+bs_levels    <- c("ps", "fs")                             # within each algo
+problem_labs <- c(sim_timeScales_fe = "time-scales DGP",
+                  sim_stratified_fe = "stratified DGP")
+
+for (var in unique(res_fe$variable)) {
+  p <- plot_one_fixedEffect(var)
+  ggsave(
+    filename = file.path(dir_figures, paste0("fixedEffect_", var, ".png")),
+    plot     = p,
+    width    = 9, height = 5
+  )
+}
+
+## baseline hazard coverage plots ----
+
+for(trans in unique(cov_by_trans$transition)) {
+  p <- plot_one_bh_coverage(cov_by_trans, trans)
+  ggsave(
+    filename = file.path(dir_figures, paste0("bh_coverage_", trans, ".png")),
+    plot     = p,
+    width    = 10, height = 6
+  )
+}
+
 # analyze results ----
-
-## error and bias for 0->1 and 0->3 transitions across tend buckets ----
-# bias_col <- "loghazard_bias"
-# rmse_col <- "loghazard_rmse"
-# summ_long <- bh_summary                                                      %>%
-#   filter(transition %in% c("0->1", "0->3"))                                 %>%
-#   mutate(problem_model = paste(problem, model, sep = " / "))                %>%
-#   select(tend, transition, problem_model, !!bias_col, !!rmse_col)           %>%
-#   rename(avg_bias = !!bias_col, avg_rmse = !!rmse_col)                      %>%
-#   pivot_longer(cols = c(avg_bias, avg_rmse),
-#                names_to  = "metric",
-#                values_to = "value")
-
-# create_bias_rmse_plot <- function(df, m, title) {
-#   ggplot(df %>% filter(metric == m),
-#          aes(x = tend, y = value,
-#              colour = problem_model, group = problem_model)) +
-#     geom_line() +
-#     geom_point(size = 1) +
-#     facet_wrap(~ transition, nrow = 1) +
-#     labs(x = "t_end", y = NULL,
-#          colour = "problem / model",
-#          title = title) +
-#     theme_bw() +
-#     theme(legend.position = "bottom")
-# }
-
-# p_bias <- create_bias_rmse_plot(summ_long, "avg_bias", "Average bias")
-# p_rmse <- create_bias_rmse_plot(summ_long, "avg_rmse", "Average RMSE")
-
-# ggsave(
-#   filename = file.path(dir_figures, "bias_rmse_0-1_0-3.png"),
-#   plot     = gridExtra::grid.arrange(p_bias, p_rmse, nrow = 2),
-#   width    = 10, height = 12
-# )
-
 
 events_rds <- file.path(registry, "events_avg.rds")
 
 if (!file.exists(events_rds)) {
+  ncores <-  parallel::detectCores() - 20
+  # ncores <- 10
+  cl      <- makeCluster(ncores)
+  registerDoParallel(cl)
 
-  ## job-ids of the *problems* we want
   ids_bh_prob <- findExperiments(prob.pattern = "sim_(timeScales|stratified)_bh", reg = reg)
 
-  ## helper: extract & summarise one job -------------------------------------
-  get_events <- function(jid) {
+  events_all <- foreach(
+    jid        = ids_bh_prob$job.id,
+    .combine   = dplyr::bind_rows,            # same shape as before
+    .packages  = c("batchtools", "dplyr")    # loaded on each worker
 
-    job <- makeJob(jid, reg = reg)             # load cached job
+  ) %dopar% {
 
-    ## pull the problem *name* (a scalar character)
-    ## any of the two lines below works – pick the one you prefer
-    pb_name <- job$prob.name           # 1) from the Problem object
-    # pb_name <- ids_bh_prob[job.id == jid]$prob.name   # 2) via the lookup table
-
-    ped <- job$instance$ped                    # wrapper_sim() output
+    job     <- batchtools::makeJob(jid, reg = reg)     # read RDS once
+    pb_name <- job$prob.name                           # character scalar
+    ped     <- job$instance$ped
 
     ped %>%
-      filter(transition %in% c("0->1", "0->3")) %>%
-      mutate(problem = pb_name)                %>%  # <- now a plain string
-      group_by(problem, transition, tend)      %>%
-      summarise(n_events = sum(ped_status == 1),
-                .groups = "drop")
+      dplyr::filter(transition %in% c("0->1", "0->3")) %>%
+      dplyr::mutate(problem = pb_name) %>%
+      dplyr::group_by(problem, transition, tend) %>%
+      dplyr::summarise(
+        n_events = sum(ped_status == 1),
+        .groups  = "drop"
+      )
   }
 
-  events_all <- map_dfr(ids_bh_prob$job.id, get_events)
+  stopCluster(cl)   # free cores
 
-  ## mean across replicates ---------------------------------------------------
-  events_avg <- events_all %>%
-    group_by(problem, transition, tend)                 %>%
+  events_avg <- events_all %>%                       # ← identical to your
+    group_by(problem, transition, tend) %>%          #   original code
     summarise(avg_events = mean(n_events), .groups = "drop")
 
-  saveRDS(events_avg, events_rds)
-
+  saveRDS(events_avg, events_rds)                    # cache for next runs
 } else {
   events_avg <- readRDS(events_rds)
 }
@@ -637,8 +646,6 @@ p_bias <- create_bias_rmse_plot(summ_long, "avg_bias", "Average bias",
 p_rmse <- create_bias_rmse_plot(summ_long, "avg_rmse", "Average RMSE",
                                 events_scaled)
 
-fig_out <- file.path(dir_figures, "bias_rmse_events_0-1_0-3.png")
-
-ggsave(fig_out,
+ggsave(file.path(dir_figures, "bias_rmse_events_0-1_0-3.png"),
        plot   = gridExtra::grid.arrange(p_bias, p_rmse, nrow = 2),
        width  = 10, height = 12)

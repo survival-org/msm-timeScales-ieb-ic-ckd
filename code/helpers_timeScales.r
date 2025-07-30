@@ -13,6 +13,7 @@ library(mgcv)
 library(pammtools)
 library(flexsurv)
 library(ggplot2)
+library(scales)
 
 source("/nvmetmp/wis37138/msm_kidneyFunction/code/helpers_sim.r")
 
@@ -127,7 +128,7 @@ wrapper_fe <- function(
       summary_mod$p.coeff["x1"]
     } else {
       transition_name <- transitions[which(beta_1_vars == .x)]
-      summary_mod$p.coeff[paste0("transition", transition_name, ":", "x1")]
+      summary_mod$p.coeff["x1"] + summary_mod$p.coeff[paste0("transition", transition_name, ":", "x1")]
     }
   })
 
@@ -337,7 +338,7 @@ dev.off()
       })
     )
 
-  nd <- make_newped_terms(ped_pc, cut, mod, dgp_tbl, from_state = 1, ci) %>%
+  nd <- make_newped_terms(ped, cut, mod, dgp_tbl, from_state = 1, ci) %>%
     mutate(
       loghazard_true = case_when(
         transition == "1->2" ~ f_1(t_1) + beta_0_12,
@@ -493,89 +494,89 @@ make_newped <- function(ped, cut, mod, bs, ci = FALSE) {
 }
 
 
-make_newped_terms <- function(ped, cut, mod, dgp_tbl, from_state, ci = FALSE) {
+# make_newped_terms <- function(ped, cut, mod, dgp_tbl, from_state, ci = FALSE) {
 
-  from_states <- sort(unique(ped$from))
-  transitions <- sort(unique(ped$transition))
+#   from_states <- sort(unique(ped$from))
+#   transitions <- sort(unique(ped$transition))
 
-  ped_new_in <- expand_grid(
-    transition = transitions,
-    tend = sort(cut)[-1], # all but the first cut
-    t_until_1 = sort(cut)[-length(cut)] # all but the last cut
-  )
+#   ped_new_in <- expand_grid(
+#     transition = transitions,
+#     tend = sort(cut)[-1], # all but the first cut
+#     t_until_1 = sort(cut)[-length(cut)] # all but the last cut
+#   )
 
-  ped_new_in <- ped_new_in %>%
-    mutate(
-      from = as.integer(sub("([0-9])->.*","\\1", transition)),
-      to   = as.integer(sub(".*->([0-9])","\\1", transition)),
-      tstart = tend - diff(cut)[1], # using the difference between consecutive values of cut
-      intlen = tend - tstart,
-      t_until_1 = ifelse(from == 0, 0, t_until_1),
-      t_1 = ifelse(from == 0, 0, tend - t_until_1)
-    ) %>%
-    add_transVars()
+#   ped_new_in <- ped_new_in %>%
+#     mutate(
+#       from = as.integer(sub("([0-9])->.*","\\1", transition)),
+#       to   = as.integer(sub(".*->([0-9])","\\1", transition)),
+#       tstart = tend - diff(cut)[1], # using the difference between consecutive values of cut
+#       intlen = tend - tstart,
+#       t_until_1 = ifelse(from == 0, 0, t_until_1),
+#       t_1 = ifelse(from == 0, 0, tend - t_until_1)
+#     ) %>%
+#     add_transVars()
 
-  ped_new <- bind_rows(
-    lapply(from_states, function(f) {
-      df <- ped_new_in %>% filter(from == f) %>% distinct()
-      if (f == 1) {
-        df <- df %>%
-          filter(tstart >= t_until_1, t_until_1 < max(cut))
-      }
-      df
-    })
-  )
+#   ped_new <- bind_rows(
+#     lapply(from_states, function(f) {
+#       df <- ped_new_in %>% filter(from == f) %>% distinct()
+#       if (f == 1) {
+#         df <- df %>%
+#           filter(tstart >= t_until_1, t_until_1 < max(cut))
+#       }
+#       df
+#     })
+#   )
 
-  ped_new <- ped_new %>% filter(from == from_state)
+#   ped_new <- ped_new %>% filter(from == from_state)
 
-  ped_new <- ped_new %>%
-    mutate(
-      from = as.character(from),
-      to   = as.character(to)
-    ) %>%
-    left_join(dgp_tbl, by = c("from","to"))
+#   ped_new <- ped_new %>%
+#     mutate(
+#       from = as.character(from),
+#       to   = as.character(to)
+#     ) %>%
+#     left_join(dgp_tbl, by = c("from","to"))
 
-  valid_tr <- dgp_tbl %>%
-    # only those transitions that have a t_1 term
-    filter(map_lgl(terms, ~ "t_1" %in% .x)) %>%
-    transmute(
-      tr          = paste0(from, "->", to),
-      par_term    = paste0("transition", tr),
-      smooth_term = "t_1"
-    )
+#   valid_tr <- dgp_tbl %>%
+#     # only those transitions that have a t_1 term
+#     filter(map_lgl(terms, ~ "t_1" %in% .x)) %>%
+#     transmute(
+#       tr          = paste0(from, "->", to),
+#       par_term    = paste0("transition", tr),
+#       smooth_term = "t_1"
+#     )
 
-  ped_new_terms <- purrr::map_dfr(valid_tr$tr, function(tr) {
-    # subset to this transition
-    df <- ped_new %>% filter(as.character(transition) == tr)
+#   ped_new_terms <- purrr::map_dfr(valid_tr$tr, function(tr) {
+#     # subset to this transition
+#     df <- ped_new %>% filter(as.character(transition) == tr)
 
-    # build the vector of three term‐names
-    tt <- valid_tr %>% filter(tr == !!tr)
-    term_vec <- c("(Intercept)", tt$par_term, tt$smooth_term)
-    # term_vec <- tt$smooth_term
+#     # build the vector of three term‐names
+#     tt <- valid_tr %>% filter(tr == !!tr)
+#     term_vec <- c("(Intercept)", tt$par_term, tt$smooth_term)
+#     # term_vec <- tt$smooth_term
 
-    # one call to add_term() for the sum of all three
-    df %>%
-      add_term(
-        object        = mod,
-        term          = term_vec,
-        se            = ci,
-        unconditional = TRUE
-      ) %>%
-      # rename the returned 'fit' into your log‐hazard
-      rename(loghazard = fit) %>%
-      # rename CIs only if requested
-      { if (ci) rename(.,
-          loghazard_lower = ci_lower,
-          loghazard_upper = ci_upper
-        ) else . }
-  })
+#     # one call to add_term() for the sum of all three
+#     df %>%
+#       add_term(
+#         object        = mod,
+#         term          = term_vec,
+#         se            = ci,
+#         unconditional = TRUE
+#       ) %>%
+#       # rename the returned 'fit' into your log‐hazard
+#       rename(loghazard = fit) %>%
+#       # rename CIs only if requested
+#       { if (ci) rename(.,
+#           loghazard_lower = ci_lower,
+#           loghazard_upper = ci_upper
+#         ) else . }
+#   })
 
 
-  ped_new_terms <- ped_new_terms %>%
-    select(-c(expr, terms))
+#   ped_new_terms <- ped_new_terms %>%
+#     select(-c(expr, terms))
 
-  return(ped_new_terms)
-}
+#   return(ped_new_terms)
+# }
 
 
 create_fe_table <- function(df, grouping_vars = character()) {
@@ -913,6 +914,118 @@ create_bh_slicePlots <- function(
 }
 
 
+plot_one_fixedEffect <- function(var_name) {
+
+  df <- res_fe %>%
+    filter(variable == var_name) %>%
+    mutate(
+      model = sub("_[^_]+$", "", model),
+      algo    = factor(model, levels = algo_levels),
+      bs      = factor(bs,        levels = bs_levels),
+      problem = recode(problem, !!!problem_labs)
+    )
+
+  true_val <- unique(df$true_value)
+
+  ggplot(df,
+         aes(x = algo,
+             y = estimate,
+             fill = bs,
+             group = interaction(algo, bs))) +
+
+    geom_boxplot(outlier.shape = NA,
+                 position = position_dodge(width = 0.75)) +
+
+    geom_hline(yintercept = true_val,
+               colour = "orange",
+               linewidth = 1.3) +
+
+    scale_fill_brewer(palette = "Dark2", name = "bs") +
+
+    facet_wrap(~ problem, nrow = 1) +
+
+    labs(
+      x     = "algorithm",
+      y     = var_name,
+      title = paste("Transition:", var_name)
+    ) +
+
+    theme_bw(base_size = 14) +
+    theme(
+      axis.text.x    = element_text(angle = 45, hjust = 1),
+      panel.spacing.x = unit(1.2, "lines")
+    )
+}
+
+
+plot_one_bh_coverage <- function(df, transition_name) {
+
+  problem_labs <- c(sim_timeScales_bh = "time-scales DGP",
+                  sim_stratified_bh = "stratified DGP")
+
+  df_plot <- df %>%
+    filter(transition == transition_name) %>%
+    mutate(
+      algo = sub("_[^_]+$", "", model),     # algo_...
+      bs   = sub(".*_", "", model)          # ps / fs
+    ) %>%
+    pivot_longer(
+      cols      = c(avg_loghazard_coverage,
+                    avg_cumu_hazard_coverage,
+                    avg_trans_prob_coverage),
+      names_to  = "metric",
+      values_to = "coverage"
+    ) %>%
+    mutate(
+      metric = factor(metric,
+                      levels = c("avg_loghazard_coverage",
+                                 "avg_cumu_hazard_coverage",
+                                 "avg_trans_prob_coverage"),
+                      labels = c("log-hazard",
+                                 "cumu hazard",
+                                 "trans prob")),
+      algo   = factor(algo,
+                      levels = c("algo_timeScales", "algo_stratified")),
+      bs     = factor(bs, levels = c("ps", "fs")),
+      problem = recode(problem, !!!problem_labs)
+    )
+
+  ggplot(df_plot,
+         aes(x = algo, y = coverage,
+             fill = bs,
+             group = interaction(algo, bs))) +
+
+    geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+
+    facet_grid(problem ~ metric, switch = "y") +
+
+    scale_fill_brewer(palette = "Dark2", name = "bs") +
+    # dashed red 95% target line
+    geom_hline(yintercept = 0.95,
+               colour      = "red",
+               linetype    = "dashed",
+               linewidth   = 1) +
+    # percent scale with 95% labelled
+    scale_y_continuous(
+      name   = "Coverage",
+      breaks = c(seq(0, 1, by = 0.2), 0.95),
+      labels = percent_format(accuracy = 1)
+    ) +
+
+    labs(x = NULL,
+         y = "average coverage",
+         title = paste("Transition", transition_name)) +
+
+    theme_bw(base_size = 14) +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1),
+      panel.spacing = unit(1, "lines"),
+      strip.placement = "outside",          # facet labels on outer edge
+      strip.text.y.left = element_text(angle = 0)  # horizontal row labels
+    )
+}
+
+
 create_bias_rmse_plot <- function(df_lines, m, title, df_hist) {
 
   ggplot() +
@@ -940,6 +1053,10 @@ create_bias_rmse_plot <- function(df_lines, m, title, df_hist) {
     ) +
     scale_fill_manual(values = c(sim_timeScales_bh = "#1f77b4",
                                  sim_stratified_bh = "#e377c2")) +
+    guides(
+      colour = guide_legend(nrow = 4, ncol = 2, byrow = TRUE),
+      fill   = guide_legend(override.aes = list(alpha = 0.35))  # unchanged
+    ) +
     theme_bw() +
     theme(legend.position = "bottom")
 }

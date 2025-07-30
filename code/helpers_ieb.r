@@ -10,64 +10,103 @@ library(mgcv)
 library(pammtools)
 library(flexsurv)
 library(ggplot2)
+library(scales)
+library(patchwork)
+
+source("/nvmetmp/wis37138/msm_kidneyFunction/code/helpers_sim.r")
 
 # data prep ----
+
 wrapper_sim <- function(
-  data,
   job,
-  formulas_list = list(
-    list(from = 0, to = 1, formula = ~ -3.5 + dgamma(t, 8, 2)*6 + 1.3*x1 + 0.8*x2),
-    list(from = 0, to = "death", formula = ~ -4.0 + 0.7*x1 + 1.5*x3),
-    list(from = 1, to = 2, formula = ~ -3.0 + dgamma(t, 8, 2)*6 + 1.3*x1 + 0.8*x2),
-    list(from = 1, to = "death", ~ -4.0 + 0.7*x1 + 1.5*x3)
-  ),
-  terminal_states = c(2, "death"),
-  cut = seq(0, 5, by = 0.01),
+  data,
+  dist_x1 = "rbinom(n, 1, 0.5)",
+  dist_x2 = "rbinom(n, 1, 0.5)",
+  beta_vals,
+  formulas_dgp,
+  terminal_states,
+  cut,
   n = 2500,
   round = 2,
   cens_type = c("none", "right", "interval", "left"),
   cens_dist = c("weibull", "exponential", "lognormal", "uniform"),
-  cens_params = c(1, 1)){
+  cens_params = NULL
+  ){
 
-  data <- cbind.data.frame(
-    id = 1:n,
-    x1 = rbinom(n, 1, 0.5),
-    x2 = rbinom(n, 1, 0.5),
-    x3 = runif(n, -3, 3),
-    from = 0,
-    t = 0)
+  df <- data.frame(
+    id          = seq_len(n),
+    from        = 0L,
+    t           = 0
+  )
 
-  df <- sim_pexp_msm(formulas_list, data, cut, terminal_states, round = round, add_counterfactuals = FALSE) %>%
-    mutate(transition = as.factor(transition))
+  vars <- get_x_vars(formulas_dgp)
+  dist_list <- list(x1 = dist_x1, x2 = dist_x2)
+  for (var in vars) {
+    if (!var %in% names(dist_list)) {
+      stop("No distribution provided for variable: ", var)
+    }
+    df[[var]] <- eval(parse(text = dist_list[[var]]))
+  }
+
+  beta_vals_unlisted <- unlist(beta_vals)
+
+  if(dist_x1 == "rnorm(n, 0, 5)" &
+     dist_x2 == "rnorm(n, 0, 5)" &
+     beta_vals_unlisted["beta_1_01"] == 0.5) {
+      beta_vals_unlisted["beta_0_01"] <- beta_vals_unlisted["beta_0_01"] - 2.0
+      beta_vals_unlisted["beta_0_12"] <- beta_vals_unlisted["beta_0_12"] - 6.0
+     }
+
+  formulas_dgp <- lapply(formulas_dgp, function(fli) {
+    old_f  <- fli$formula          # e.g. ~ f_0(tend) + beta_1_01*x1 + …
+    rhs_old <- old_f[[2]]          # extract the RHS expression
+    rhs_new <- bake_expr(rhs_old, beta_vals_unlisted)
+    # rebuild a formula "~ <rhs_new>" in the global env so f_0/g_0 etc still resolve
+    fli$formula <- as.formula(call("~", rhs_new), env = globalenv())
+    fli
+  })
+
+  events <- sim_pexp_msm(formulas_dgp, df, cut, terminal_states, round = round, add_counterfactuals = FALSE)
 
   if(cens_type != "none") {
-    df <- df %>%
-      add_cens(type = cens_type, distribution = cens_dist, parameters = cens_params, round = round)
+    events <- events %>%
+      add_censoring(type = cens_type, distribution = cens_dist, parameters = cens_params, round = round)
   }
 
   ped <- as_ped_multistate(
-    data       = df %>% add_counterfactual_transitions(),
+    data       = events %>% add_counterfactual_transitions(),
     formula    = Surv(tstart, tstop, status) ~ .,
     transition = "transition",
     id         = "id",
     censor_code = 0,
     timescale  = "calendar")
 
-  out <- list(
-    df = df,
-    ped = ped
-  )
+  ped <- ped %>%
+    add_timeScales() %>%
+    add_transVars()
 
+  out <- list(
+    events = events,
+    ped = ped,
+    formulas_dgp  = formulas_dgp,
+    beta_vals = beta_vals_unlisted
+  )
+saveRDS(out, "out.rds")
   return(out)
 }
+
 
 wrapper_msm <- function(
   data,
   job,
   instance,
-  formula = "ped_status ~ s(tend, by=transition) + transition + x1*transition") {
+  formula) {
 
   ped <- instance$ped
+
+  ped$trans_after_1 <- factor(ped$trans_after_1,
+                              levels = c("none", "1->2", "1->3"),
+                              ordered = TRUE)
 
   mod <- bam(as.formula(formula)
                       , data = ped
@@ -77,36 +116,76 @@ wrapper_msm <- function(
                       , method = "fREML"
   )
   summary_mod <- summary(mod)
+  vcov_mod <- vcov(mod)
+
+  formulas_dgp <- instance$formulas_dgp
+
+  # beta_vars <- formulas_dgp %>%
+  #   map(~ {
+  #     vars <- all.vars(.x$formula)
+  #     vars[grepl("^beta_[12]_(01|12)$", vars)]
+  #   }) %>%
+  #   unlist() %>%
+  #   unique() %>%
+  #   sort()
+
+  # beta_true <- beta_vars %>%
+  #   map(~ eval(parse(text = .x), envir = ped)) %>%
+  #   set_names(beta_vars)
+
+  beta_true <- as.list(instance$beta_vals)
 
   # Create a dataframe with coefficient information
   coef_df <- data.frame(
-    transition = c("onset", "progression"),
+    transition = c("onset", "progression_int", "progression"),
     coefficient = c(summary_mod$p.coeff["x1"],
-                   summary_mod$p.coeff["transition1->2:x1"]),
+                   summary_mod$p.coeff["transition1->2:x1"],
+                   summary_mod$p.coeff["x1"] + summary_mod$p.coeff["transition1->2:x1"]),
     std_error = c(summary_mod$se["x1"],
-                 summary_mod$se["transition1->2:x1"]),
+                 summary_mod$se["transition1->2:x1"],
+                 sqrt(vcov_mod["x1", "x1"] + vcov_mod["transition1->2:x1", "transition1->2:x1"] +
+                        2 * vcov_mod["x1", "transition1->2:x1"])),
     p_value = c(summary_mod$p.pv["x1"],
-               summary_mod$p.pv["transition1->2:x1"]),
+               summary_mod$p.pv["transition1->2:x1"],
+               NA),
     stringsAsFactors = FALSE
   )
 
+  coef_df[coef_df$transition == "progression", "p_value"] <-
+    2 * (1 - pnorm(abs(coef_df[coef_df$transition == "progression", "coefficient"] /
+                      coef_df[coef_df$transition == "progression", "std_error"])))
+
   # Round numeric values for better readability
-  coef_df$coefficient <- round(coef_df$coefficient, 4)
-  coef_df$std_error <- round(coef_df$std_error, 4)
-  coef_df$p_value <- round(coef_df$p_value, 4)
+  coef_df <- coef_df %>%
+    mutate(
+      coefficient = round(coefficient, 4),
+      std_error = round(std_error, 4),
+      p_value = round(p_value, 4),
+      beta_1 = c(beta_true$beta_1_01, beta_true$beta_1_12 - beta_true$beta_1_01, beta_true$beta_1_12),
+      beta_2 = c(beta_true$beta_2_01, beta_true$beta_2_12 - beta_true$beta_2_01, beta_true$beta_2_12),
+      coverage = ifelse(
+        coefficient - 1.96 * std_error <= beta_1 &
+        coefficient + 1.96 * std_error >= beta_1,
+        1, 0
+      ),
+      bias = coefficient - beta_1
+    )
 
   return(coef_df)
 }
 
+
 wrapper_cor <- function(
   data,
   job,
-  instance,
-  vars = c("x1", "x2", "x3")) {
+  instance) {
 
-  df <- instance$df
+  df <- instance$events
 
-  # Check if all variables are in the dataframe
+  vars <- get_x_vars(instance$formulas_dgp)
+  if (length(vars) == 0) {
+    stop("No covariates found in the formulas.")
+  }
   if (!all(vars %in% colnames(df))) {
     missing_vars <- vars[!vars %in% colnames(df)]
     stop("The following variables are not found in the data: ",
@@ -116,11 +195,33 @@ wrapper_cor <- function(
   cor_df <- calc_statewise_correlation(
     data = df,
     from_states = unique(df$from),
-    vars = c("x1", "x2", "x3")
+    vars = vars
   )
 
   return(cor_df)
 }
+
+
+# Recursively walk an R expression and replace any symbol in `vals`
+# with its numeric value.
+bake_expr <- function(expr, vals) {
+  if (is.name(expr)) {
+    nm <- as.character(expr)
+    if (nm %in% names(vals)) {
+      return(vals[[nm]])        # replace symbol with number
+    } else {
+      return(expr)              # keep other symbols as-is
+    }
+  }
+  if (!is.call(expr)) {
+    return(expr)                # e.g. constants, literals
+  }
+  # it's a call: recurse over each element
+  elts <- as.list(expr)
+  elts <- lapply(elts, bake_expr, vals)
+  return(as.call(elts))
+}
+
 
 calc_statewise_correlation <- function(data, from_states, vars) {
   # Check if vars contains valid column names
@@ -176,664 +277,215 @@ calc_statewise_correlation <- function(data, from_states, vars) {
   return(results_df)
 }
 
-calc_coverage_bias <- function(df) {
 
-  # Helper function to calculate coverage and bias
-  stats_calc <- function(data, true_value) {
-    data %>%
-      mutate(
-        lower = coefficient - 1.96 * std_error,
-        upper = coefficient + 1.96 * std_error,
-        covered = (true_value >= lower & true_value <= upper),
-        bias = coefficient - true_value
-      ) %>%
-      summarise(
-        coverage = mean(covered),
-        bias = mean(bias)
+plot_cor <- function(df, var_name = "rho") {
+  df <- df %>%
+    mutate(
+      from    = factor(from, levels = c("0", "1")),
+      problem = recode(problem, !!!problem_labs)
+    )
+
+  true_val <- 0
+
+  ggplot(df,
+         aes(
+           x     = from,
+           y     = rho,
+           fill  = from,                        # <— map fill to state
+           group = interaction(from, algorithm) # keeps separate boxes per state×algo
+         )) +
+
+    geom_hline(
+      yintercept = true_val,
+      colour     = "orange",
+      linewidth  = 1.3,
+      linetype   = "solid"
+    ) +
+
+    geom_boxplot(
+      outlier.shape = NA,
+      position      = position_dodge(width = 0.75)
+    ) +
+
+    # manually set state‐colours: 0 = green, 1 = red
+    scale_fill_manual(
+      name   = "State",
+      values = c("0" = "green", "1" = "red"),
+      labels = c("0", "1")
+    ) +
+
+    facet_wrap(~ problem, nrow = 1) +
+
+    scale_x_discrete(
+      name   = "State",
+      labels = c("0", "1")
+    ) +
+
+    # Added scale_y_continuous for requested limits/breaks
+    scale_y_continuous(
+      limits = c(-0.51, 0.05),
+      breaks = seq(-0.50, 0.0, by = 0.10),
+      labels = number_format(accuracy = 0.01)
+    ) +
+
+    labs(
+      y     = var_name
+    ) +
+
+    theme_bw(base_size = 14) +
+    theme(
+      axis.text.x     = element_text(angle = 0),
+      panel.spacing.x = unit(1.2, "lines")
+    )
+}
+
+
+plot_coefs <- function(df, var_name = "coefficient") {
+  df2 <- df %>%
+    mutate(
+      algo       = case_when(
+        grepl("^stratified", formula_name) ~ "stratified",
+        grepl("^timeScales", formula_name) ~ "timeScales",
+        TRUE ~ formula_name
+      ),
+      ieb        = if_else(grepl("_ieb$", formula_name), "IEB", "Base"),
+      problem    = recode(problem, !!!problem_labs),
+      transition = factor(transition, levels = unique(transition))
+    )
+
+  df_hlines <- df2 %>%
+    distinct(transition, problem, beta_1)
+
+  # Split data by transition
+  p_list <- lapply(levels(df2$transition), function(tran) {
+    df_sub <- df2 %>% filter(transition == tran)
+    df_hlines_sub <- df_hlines %>% filter(transition == tran)
+    # Set y-limits and breaks based on transition
+    if (tran %in% c("onset", "progression")) {
+      ylims <- c(0.05, 0.60)
+      ybreaks <- seq(0.1, 0.6, by = 0.1)
+    } else if (tran == "progression_int") {
+      ylims <- c(-0.20, 0.08)
+      ybreaks <- seq(-0.2, 0.1, by = 0.1)
+    } else {
+      ylims <- NULL; ybreaks <- waiver()
+    }
+
+    ggplot(df_sub, aes(
+      x     = algo,
+      y     = coefficient,
+      fill  = ieb,
+      color = ieb,
+      group = interaction(algo, ieb)
+    )) +
+      geom_hline(
+        data        = df_hlines_sub,
+        aes(yintercept = beta_1),
+        colour      = "orange",
+        linewidth   = 1.3,
+        linetype    = "solid"
+      ) +
+      geom_boxplot(
+        outlier.shape = NA,
+        position      = position_dodge(width = 0.75)
+      ) +
+      scale_fill_brewer(
+        palette = "Dark2",
+        name    = "Model",
+        labels  = c("Base", "IEB")
+      ) +
+      scale_color_brewer(
+        palette = "Dark2",
+        guide   = "none"
+      ) +
+      facet_grid(cols = vars(problem)) +
+      scale_y_continuous(
+        limits = ylims,
+        breaks = ybreaks,
+        labels = number_format(accuracy = 0.1)
+      ) +
+      labs(
+        x = "Algorithm",
+        y = var_name,
+        title = tran
+      ) +
+      theme_bw(base_size = 14) +
+      theme(
+        axis.text.x   = element_text(angle = 0),
+        panel.spacing = unit(1.2, "lines")
       )
-  }
+  })
 
-  # Compute coverage and bias
-  onset_ieb <- df %>% filter(!grepl("x2", formula), transition == "onset") %>% stats_calc(1.3)
-  progression_ieb <- df %>% filter(!grepl("x2", formula), transition == "progression") %>% stats_calc(0)
-  onset_oracle <- df %>% filter(grepl("x2", formula), transition == "onset") %>% stats_calc(1.3)
-  progression_oracle <- df %>% filter(grepl("x2", formula), transition == "progression") %>% stats_calc(0)
+  # Combine plots vertically
+  p <- p_list[[1]] / p_list[[2]] / p_list[[3]]
 
-  # Combine results into a dataframe
-  result_df <- data.frame(
-    onset_ieb = c(onset_ieb$coverage, onset_ieb$bias),
-    progression_ieb = c(progression_ieb$coverage, progression_ieb$bias),
-    onset_oracle = c(onset_oracle$coverage, onset_oracle$bias),
-    progression_oracle = c(progression_oracle$coverage, progression_oracle$bias)
-  )
-
-  rownames(result_df) <- c("coverage", "bias")
-
-  return(result_df)
-}
-
-#' Simulate survival times from the piece-wise exponential distribution
-#'
-#' @param formula An extended formula that specifies the linear predictor.
-#' If you want to include a smooth baseline
-#' or time-varying effects, use \code{t} within your formula as
-#' if it was a covariate in the data, although it is not and should not
-#' be included in the \code{data} provided to \code{sim_pexp}. See examples
-#' below.
-#'
-#' @param data A data set with variables specified in \code{formula}.
-#' @param cut A sequence of time-points starting with 0.
-#' @import dplyr
-#' @import Formula
-#' @importFrom lazyeval f_eval
-#' @importFrom tidyr replace_na
-#' @examples
-#' library(survival)
-#' library(dplyr)
-#' library(pammtools)
-#'
-#' # set number of observations/subjects
-#' n <- 250
-#' # create data set with variables which will affect the hazard rate.
-#' df <- cbind.data.frame(x1 = runif (n, -3, 3), x2 = runif (n, 0, 6)) %>%
-#'  as_tibble()
-#' # the formula which specifies how covariates affet the hazard rate
-#' f0 <- function(t) {
-#'  dgamma(t, 8, 2) *6
-#' }
-#' form <- ~ -3.5 + f0(t) -0.5*x1 + sqrt(x2)
-#' set.seed(24032018)
-#' sim_df <- sim_pexp(form, df, 1:10)
-#' head(sim_df)
-#' plot(survfit(Surv(time, status)~1, data = sim_df ))
-#'
-#' # for control, estimate with Cox PH
-#' mod <- coxph(Surv(time, status) ~ x1 + pspline(x2), data=sim_df)
-#' coef(mod)[1]
-#' layout(matrix(1:2, nrow=1))
-#' termplot(mod, se = TRUE)
-#'
-#' # and using PAMs
-#' layout(1)
-#' ped <- sim_df %>% as_ped(Surv(time, status)~., max_time=10)
-#' library(mgcv)
-#' pam <- gam(ped_status ~ s(tend) + x1 + s(x2), data=ped, family=poisson, offset=offset)
-#' coef(pam)[2]
-#' plot(pam, page=1)
-#'
-#'\dontrun{
-#' # Example 2: Functional covariates/cumulative coefficients
-#' # function to generate one exposure profile, tz is a vector of time points
-#' # at which TDC z was observed
-#' rng_z = function(nz) {
-#'   as.numeric(arima.sim(n = nz, list(ar = c(.8, -.6))))
-#' }
-#' # two different exposure times  for two different exposures
-#' tz1 <- 1:10
-#' tz2 <- -5:5
-#' # generate exposures and add to data set
-#' df <- df %>%
-#'   add_tdc(tz1, rng_z) %>%
-#'   add_tdc(tz2, rng_z)
-#' df
-#'
-#' # define tri-variate function of time, exposure time and exposure z
-#' ft <- function(t, tmax) {
-#'   -1*cos(t/tmax*pi)
-#' }
-#' fdnorm <- function(x) (dnorm(x,1.5,2)+1.5*dnorm(x,7.5,1))
-#' wpeak2 <- function(lag) 15*dnorm(lag,8,10)
-#' wdnorm <- function(lag) 5*(dnorm(lag,4,6)+dnorm(lag,25,4))
-#' f_xyz1 <- function(t, tz, z) {
-#'   ft(t, tmax=10) * 0.8*fdnorm(z)* wpeak2(t - tz)
-#' }
-#' f_xyz2 <- function(t, tz, z) {
-#'   wdnorm(t-tz) * z
-#' }
-#'
-#' # define lag-lead window function
-#' ll_fun <- function(t, tz) {t >= tz}
-#' ll_fun2 <- function(t, tz) {t - 2 >= tz}
-#' # simulate data with cumulative effect
-#' sim_df <- sim_pexp(
-#'   formula = ~ -3.5 + f0(t) -0.5*x1 + sqrt(x2)|
-#'      fcumu(t, tz1, z.tz1, f_xyz=f_xyz1, ll_fun=ll_fun) +
-#'      fcumu(t, tz2, z.tz2, f_xyz=f_xyz2, ll_fun=ll_fun2),
-#'   data = df,
-#'   cut = 0:10)
-#'}
-#' @export
-sim_pexp <- function(formula, data, cut) {
-
-  data <- data %>%
-    mutate(
-      id     = row_number(),
-      time   = max(cut),
-      status = 1)
-
-  # extract formulas for different components
-  Form <- Formula(formula)
-  f1   <- formula(Form, rhs = 1)
-  # later more sophisticated checks + could be used to map over all rhs
-  # formulae, check what type of evaluation is needed and return ETAs for
-  # each part of the formula separated by |, such that model estimation may
-  # be checked for individuals terms/parts
-  if (length(Form)[2] > 1) {
-    f2  <- formula(Form, rhs = 2)
-  } else {
-    f2 <- NULL
-  }
-
-  # construct eta for time-constant part
-  ped  <- split_data(
-      formula = Surv(time, status)~.,
-      data    = select_if(data, is_atomic),
-      cut     = cut,
-      id      = "id") %>%
-    rename("t" = "tstart") %>%
-    mutate(rate = exp(f_eval(f1, .)))
-
-  # construct eta for time-dependent part
-  if (!is.null(f2)) {
-    terms_f2  <- terms(f2, specials = "fcumu")
-    f2_ev     <- list()
-    f2_tl <- attr(terms_f2, "term.labels")
-    for (i in seq_along(f2_tl)) {
-      f2_ev[[i]] <- eval(expr = parse(text = f2_tl[[i]]), envir = .GlobalEnv)
-    }
-    ll_funs   <- map(f2_ev, ~.x[["ll_fun"]])
-    tz_vars   <- map_chr(f2_ev, ~.x[["vars"]][1])
-    cumu_funs <- map(f2_ev, ~.x[["f_xyz"]])
-    names(tz_vars) <- names(ll_funs) <- names(cumu_funs) <- tz_vars
-    z_form <- list("eta_", map_chr(f2_ev, ~.x[["vars"]][2])) %>%
-      reduce(paste0, collapse = "+") %>% paste0("~", .) %>% as.formula()
-
-    df2 <- map(f2_ev, function(fc) eta_cumu(data = data, fc, cut = cut))
-    suppressMessages(
-      ped <- ped %>%
-        left_join(reduce(df2, full_join))
-    )
-    ped <- ped %>%
-      mutate_at(vars(contains("eta_")), replace_na, 0) %>%
-      group_by(.data$id, .data$t) %>%
-      mutate(eta_z = !!rlang::get_expr(z_form)) %>%
-      mutate(rate = .data$rate * exp(.data$eta_z))
-  } else {
-    tz_vars <- NULL
-  }
-
-  sim_df <- ped %>%
-    group_by(id) %>%
-    summarize(time = pammtools:::rpexp(rate = .data$rate, t = .data$t)) %>%
-    mutate(
-      status = 1L * (.data$time <= max(cut)),
-      time   = pmin(.data$time, max(cut)))
-
-  suppressMessages(
-    sim_df <- sim_df %>%
-      left_join(select(data, -all_of(c("time", "status"))))
-  )
-
-  attr(sim_df, "id_var")     <- "id"
-  attr(sim_df, "time_var")   <- "time"
-  attr(sim_df, "status_var") <- "status"
-  attr(sim_df, "tz_var")     <- tz_vars
-  attr(sim_df, "cens_value") <- 0
-  attr(sim_df, "breaks")     <- cut
-  attr(sim_df, "tz")         <- imap(tz_vars, ~select(sim_df, all_of(.x)) %>%
-    pull(.x) %>% unique()) %>% flatten()
-  if (exists("ll_funs")) attr(sim_df, "ll_funs") <- ll_funs
-  if (exists("cumu_funs")) attr(sim_df, "cumu_funs") <- cumu_funs
-  attr(sim_df, "id_n") <- sim_df %>% pull("time") %>%
-    pmin(max(cut)) %>%
-    map_int(findInterval, vec = cut, left.open = TRUE, rightmost.closed = TRUE)
-  attr(sim_df, "id_tseq") <- attr(sim_df, "id_n") %>%
-    map(seq_len) %>% unlist()
-  attr(sim_df, "id_tz_seq") <- rep(seq_along(pull(sim_df, id)),
-    times = attr(sim_df, "id_n"))
-  attr(sim_df, "sim_formula") <- formula
-
-  class(sim_df) <- c("sim_df", class(unped(sim_df)))
-
-  if (any(!map_lgl(sim_df, is_atomic))) {
-    class(sim_df) <- c("nested_fdf", class(sim_df))
-  }
-
-  sim_df
-
+  return(p)
 }
 
 
-#' Add time-dependent covariate to a data set
-#'
-#' Given a data set in standard format (with one row per subject/observation),
-#' this function adds a column with the specified exposure time points
-#' and a column with respective exposures, created from \code{rng_fun}.
-#' This function should usually only be used to create data sets passed
-#' to \code{\link[pammtools]{sim_pexp}}.
-#'
-#' @inheritParams sim_pexp
-#' @param tz A numeric vector of exposure times (relative to the
-#' beginning of the follow-up time \code{t})
-#' @param rng_fun A random number generating function that creates
-#' the time-dependent covariates at time points \code{tz}.
-#' First argument of the function should be \code{n}, the number of
-#' random numbers to generate. Within \code{add_tdc}, \code{n} will be set
-#' to \code{length(tz)}.
-#' @param ... Currently not used.
-#' @import dplyr
-#' @importFrom rlang eval_tidy :=
-#' @importFrom purrr map
-#' @export
-add_tdc <- function(data, tz, rng_fun, ...) {
-
-  tz      <- enquo(tz)
-  nz      <- length(eval_tidy(tz))
-  name_tz <- quo_name(tz)
-  z_var   <- paste0("z.", name_tz)
-
-  data %>%
+plot_coverage <- function(df) {
+  # 1) derive “algo” and flag IEB, recode problem, order transitions
+  df2 <- df %>%
     mutate(
-      !!name_tz := map(seq_len(n()), ~ !!tz),
-      !!z_var   := map(seq_len(n()), ~ rng_fun(nz = nz))) %>%
-    as_tibble()
-
-}
-
-
-
-#' A formula special used to handle cumulative effect specifications
-#'
-#' Can be used in the second part of the formula specification provided
-#' to \code{\link[pammtools]{sim_pexp}} and should only be used in this
-#' context.
-#'
-#' @importFrom purrr map
-#' @export
-#' @keywords internal
-fcumu <- function(..., by = NULL, f_xyz, ll_fun) {
-
-  vars   <- as.list(substitute(list(...)))[-1] %>%
-    map(~as.character(.x)) %>%
-    unlist()
-  vars <- vars[vars != "t"]
-
-  list(
-    vars   = vars,
-    f_xyz  = f_xyz,
-    ll_fun = ll_fun)
-
-}
-
-#' @import dplyr
-#' @importFrom tidyr unnest
-#' @importFrom rlang sym :=
-#' @keywords internal
-eta_cumu <- function(data, fcumu, cut, ...) {
-
-  vars   <- fcumu$vars
-  f_xyz  <- fcumu$f_xyz
-  ll_fun <- fcumu$ll_fun
-  eta_name <- paste0("eta_", vars[2])
-  comb_df <- combine_df(
-    data.frame(t = cut),
-    select(data, one_of("id", vars)))
-  comb_df <- comb_df %>% unnest(cols = -one_of("id"))
-  comb_df %>%
-    group_by(.data$id, .data$t) %>%
-    mutate(
-      LL = ll_fun(t, !!sym(vars[1])) * 1,
-      delta = c(mean(abs(diff(!!sym(vars[1])))), abs(diff(!!sym(vars[1]))))) %>%
-    ungroup() %>%
-    filter(.data$LL != 0) %>%
-    group_by(.data$id, .data$t) %>%
-    summarize(!!eta_name :=
-      sum(.data$delta * f_xyz(.data$t, .data[[vars[1]]], .data[[vars[2]]])))
-
-}
-
-#' Simulate data for competing risks scenario
-#'
-#'
-#' @keywords internal
-sim_pexp_cr <- function(formula, data, cut, round = NULL) {
-
-  # Formula extends the base class formula by allowing for multiple responses and multiple parts of regressors
-  Form    <- Formula(formula)
-  # Extract the right handside of the Formula
-  F_rhs   <- attr(Form, "rhs")
-  l_rhs   <- length(F_rhs)
-  seq_rhs <- seq_len(l_rhs)
-
-  if (!("id" %in% names(data))) {
-    data$id <- 1:(nrow(data))
-  }
-
-  if (!("t" %in% names(data))) {
-    data$t <- 0
-  }
-
-  data <- data %>%
-    mutate(
-      time   = max(cut),
-      status = 1
+      algo       = case_when(
+                     grepl("^stratified", formula_name) ~ "stratified",
+                     grepl("^timeScales", formula_name) ~ "timeScales",
+                     TRUE ~ formula_name
+                   ),
+      ieb        = if_else(grepl("_ieb$", formula_name), "IEB", "Base"),
+      problem    = recode(problem, !!!problem_labs),
+      transition = factor(transition, levels = unique(transition))
     )
 
-  # construct eta for time-constant part
-  # offset (the log of the duration during which the subject was under risk in that interval)
-  ped  <- split_data(
-    formula = Surv(time, status)~.,
-    data    = select_if(data, is_atomic),
-    cut     = cut,
-    id      = "id") %>%
-    mutate(
-      t_original = t,
-      t = t + .data$tstart
-    )
-
-  # calculate cause specific hazards
-  for (i in seq_rhs) {
-    ped[[paste0("hazard", i)]] <-  exp(eval(F_rhs[[i]], ped))
-  }
-  ped[["rate"]] <- reduce(ped[paste0("hazard", seq_rhs)], `+`)
-
-  # simulate survival times
-  sim_df <- ped %>%
-    group_by(id) %>%
-    mutate(
-      time_pexp   = pammtools:::rpexp(rate = .data$rate, t = .data$tstart),
-      time_event  = .data$time_pexp + .data$t_original,
-      time_event  = ifelse(is.null(round), .data$time_event, round(.data$time_event, digits = round)),
-      status      = 1L * (.data$time_event <= max(cut)),
-      time        = pmin(.data$time_event, max(cut)),
-      t           = .data$t_original # transform t back to original, since t serves as start time
+  # 2) summarise & run binom.test per group
+  df_sum <- df2 %>%
+    group_by(transition, problem, algo, ieb) %>%
+    summarise(
+      mean_cov = mean(coverage, na.rm = TRUE),
+      x        = sum(coverage, na.rm = TRUE),
+      n        = n(),
+      .groups = "drop"
     ) %>%
-    ungroup() %>%
-    filter(.data$tstart + .data$t < .data$time & .data$time <= pmin(.data$tend + .data$t, max(cut))) # only a single row per id
+    rowwise() %>%
+    mutate(
+      bt        = list(binom.test(x, n, p = 0.5)),
+      ci_lower  = bt$conf.int[1],
+      ci_upper  = bt$conf.int[2]
+    ) %>%
+    ungroup()
 
-  # Ziehe aus den möglichen hazards eins mit den entsprechenden Wahrscheinlichkeiten
-  sim_df$type <- apply(sim_df[paste0("hazard", seq_rhs)], 1,
-    function(probs)
-      sample(seq_rhs, 1, prob = probs))
-
-  sim_df %>%
-    select(-one_of(c("tstart", "tend", "interval", "offset", "ped_status", "rate")))
-
-}
-
-
-#' Simulate data for multi-state modeling scenario
-#' via consecutive calls to \code{sim_pexp_cr}
-#' where start time and state are updated for each individual
-#'
-#' @keywords internal
-sim_pexp_msm <- function(formulas_list, data, cut, terminal_states, round = NULL, add_counterfactuals = TRUE) {
-
-  max_time <- max(cut)
-
-  # Helper function to extract the "from", "to", and "formula" from each list element.
-  extract_transition <- function(x) {
-    from_val <- if (!is.null(x$from)) x$from else x[[1]]
-    to_val   <- if (!is.null(x$to)) x$to else x[[2]]
-    form_val <- if (!is.null(x$formula)) x$formula else x[[3]]
-    list(from = from_val, to = to_val, formula = form_val)
-  }
-
-  # Initialize an empty list to accumulate simulated transitions.
-  sim_results <- list()
-
-  # current_data holds individuals still at risk for further transitions.
-  current_data <- data
-
-  while (nrow(current_data) > 0) {
-
-    # For each unique state in the current data:
-    current_states <- as.character(unique(current_data$from))
-
-    # For accumulating data for the next round:
-    next_round <- list()
-
-    for (state in current_states) {
-      # Select individuals currently in this state.
-      state_data <- current_data[current_data$from == state, ]
-
-      # Identify transitions possible from this state.
-      possible_transitions <- Filter(function(x) {
-        trans <- extract_transition(x)
-        as.character(trans$from) == as.character(state)
-      }, formulas_list)
-
-      # Skip if no transitions are defined for this state.
-      if (length(possible_transitions) == 0) next
-
-      # Combine the hazard formulas for all transitions from this state into one formula.
-      combined_rhs <- sapply(possible_transitions, function(x) {
-        trans <- extract_transition(x)
-        deparse(trans$formula[[2]])
-      })
-      combined_formula <- as.formula(paste("~", paste(combined_rhs, collapse = " | ")))
-
-      # Simulate waiting times for all competing transitions from this state.
-      sim_df <- sim_pexp_cr(combined_formula, state_data, cut, round = round)
-
-      # Map the simulated 'type' (an index) back to the corresponding transition.
-      to_states <- sapply(possible_transitions, function(x) {
-        trans <- extract_transition(x)
-        trans$to
-      })
-      trans_ids <- sapply(possible_transitions, function(x) {
-        trans <- extract_transition(x)
-        paste0("trans_", state, "_", trans$to)
-      })
-
-      sim_df <- sim_df %>%
-        mutate(from = state,
-               to = sapply(type, function(x) to_states[x]),
-               transition = sapply(type, function(x) trans_ids[x])
-        )
-
-      # Combine the result from this state with the overall results.
-      sim_results[[as.character(state)]] <- sim_df
-
-      # Identify individuals who experienced an event (status==1),
-      # who are not censored (time < max_time), and whose new state is not terminal.
-      successful <- sim_df %>%
-        filter(status == 1, time < max_time, !(to %in% terminal_states))
-
-      # Update these individuals for the next round:
-      # The new starting time is the simulated event time (in column 'time'),
-      # and their current state is updated to the 'to' state.
-      if (nrow(successful) > 0) {
-        updated <- state_data %>%
-          filter(id %in% successful$id) %>%
-          mutate(t = successful$time[match(id, successful$id)],
-                 from = successful$to[match(id, successful$id)])
-        next_round[[as.character(state)]] <- updated
-      }
-    }
-
-    # Prepare for the next iteration:
-    current_data <- bind_rows(next_round)
-    if (nrow(current_data) == 0) break
-  }
-
-  # Combine all simulated transitions into the final multi-state data frame.
-  final_sim_df <- bind_rows(sim_results) %>%
-    select(-one_of(c("type", "t_original", "transition", "time_pexp", "time_event")),
-           -dplyr::contains("hazard")) %>%
-    mutate(transition = paste0(from, "->", to)) %>%
-    relocate(to, .after = from) %>%
-    rename(tstart = t, tstop = time) %>%
-    relocate(tstop, .after = tstart) %>%
-    arrange(id, tstart)
-
-  # Add counterfactual transitions if requested.
-  if (add_counterfactuals) {
-    final_sim_df <- final_sim_df %>% add_counterfactual_transitions()
-  }
-
-  return(final_sim_df)
-}
-
-
-
-
-#' Add censoring on top of simulated data
-#' TBD: let user pass vector of times instead of imposing (parametric) censoring distribution
-#' TBD: implement pexp for right censoring with covariate-dependent hazard
-#' TBD: implement left-censoring
-#' @keywords internal
-add_censoring <- function(data, type = "right", distribution = "weibull", parameters = NULL, round = NULL) {
-
-  if (type == "right") {
-    # Check parameters length based on distribution
-    if (distribution %in% c("weibull", "lognormal")) {
-      if (length(parameters) != 2) {
-        stop("For 'weibull' or 'lognormal' distribution, 'parameters' must be of length 2 (e.g., shape & scale, or meanlog & sdlog).")
-      }
-    } else if (distribution == "exponential") {
-      if (length(parameters) != 1) {
-        stop("For 'exponential' distribution, 'parameters' must be of length 1 (i.e., rate).")
-      }
-    } else {
-      stop("Unsupported distribution. Choose 'weibull', 'exponential', or 'lognormal'.")
-    }
-
-    data_right <- data %>%
-      group_by(id) %>%
-      # Draw one censoring time per individual
-      mutate(censoring_time = case_when(
-        distribution == "weibull"  ~ rweibull(1, shape = parameters[1], scale = parameters[2]),
-        distribution == "exponential" ~ rexp(1, rate = parameters[1]),
-        distribution == "lognormal" ~ rlnorm(1, meanlog = parameters[1], sdlog = parameters[2])
-      )) %>%
-      mutate(censoring_time = ifelse(is.null(round), censoring_time, round(censoring_time, digits = round))) %>%
-      # Now, within the same grouping, order and determine censoring
-      arrange(tstart) %>%
-      mutate(row_index = row_number(),
-            censor_flag = (tstart <= censoring_time & censoring_time < tstop),
-            first_censor = ifelse(any(censor_flag), min(row_index[censor_flag]), Inf)) %>%
-      filter(row_index <= first_censor) %>%
-      mutate(tstop = ifelse(censor_flag, censoring_time, tstop),
-            status = ifelse(censor_flag, 0, status)) %>%
-      ungroup() %>%
-      filter(tstart < tstop) %>%  # remove any row where tstart == tstop
-      select(-c(censoring_time, censor_flag, row_index, first_censor)) %>%
-      arrange(id, tstart)
-
-    return(data_right)
-
-  } else if (type == "left") {
-    # Left-censoring branch applies to individuals with >1 transition.
-    if (distribution %in% c("weibull", "lognormal")) {
-      if (length(parameters) != 2) {
-        stop("For 'weibull' or 'lognormal' distribution, 'parameters' must be of length 2 (e.g., shape & scale, or meanlog & sdlog).")
-      }
-    } else if (distribution == "exponential") {
-      if (length(parameters) != 1) {
-        stop("For 'exponential' distribution, 'parameters' must be of length 1 (i.e., rate).")
-      }
-    } else {
-      stop("Unsupported distribution. Choose 'weibull', 'exponential', or 'lognormal'.")
-    }
-
-    # Process every individual via group_modify.
-    # For groups with only one row, return unchanged.
-    # For groups with >1 row, draw a left-censoring time L and adjust:
-    # - If L <= first tstart: leave unchanged.
-    # - Otherwise, find the first row i with L <= tstop[i],
-    #   drop rows 1:(i-1) and update row i's tstart to L.
-    # - If L > all tstop values, drop the individual.
-    data_left <- data %>%
-      group_by(id) %>%
-      arrange(tstart) %>%
-      group_modify(~ {
-        df <- .x[order(.x$tstart), ]
-        if(nrow(df) < 2) return(df)  # Only one row, leave unchanged.
-        # Draw left-censoring time L for this individual.
-        L <- if (distribution == "weibull") {
-          rweibull(1, shape = parameters[1], scale = parameters[2])
-        } else if (distribution == "exponential") {
-          rexp(1, rate = parameters[1])
-        } else if (distribution == "lognormal") {
-          rlnorm(1, meanlog = parameters[1], sdlog = parameters[2])
-        }
-        if (!is.null(round)) {
-          L <- round(L, digits = round)
-        }
-        # If L is less than or equal to the first observed tstart, leave unchanged.
-        if (L <= df$tstart[1]) {
-          return(df)
-        } else {
-          # Find the first row i such that L <= tstop[i]
-          i <- which(L <= df$tstop)[1]
-          if (is.na(i)) {
-            # L exceeds all tstop values: drop the individual.
-            return(tibble())
-          } else {
-            # Drop rows 1 to (i-1) and update row i's tstart to L.
-            df_new <- df[i:nrow(df), ]
-            df_new$tstart[1] <- L
-            return(df_new)
-          }
-        }
-      }) %>% ungroup()
-
-    return(data_left)
-
-  } else if (type == "interval") {
-    if (distribution != "uniform") {
-      stop("For interval censoring, only the 'uniform' distribution is supported.")
-    }
-
-    # Interval-censoring branch: for each individual with multiple transitions,
-    # leave the first tstart and the final tstop unchanged.
-    # For each intermediate interval j (1 <= j < k), draw an imputed event time from
-    # [tstop[j], tstop[j+1]) and update:
-    #   - row j's tstop becomes the imputed value,
-    #   - row (j+1)'s tstart becomes the imputed value.
-    data_interval <- data %>%
-      arrange(id, tstart) %>%
-      group_by(id) %>%
-      group_modify(~ {
-        df <- .x[order(.x$tstart), ]
-        k <- nrow(df)
-        if (k < 2) return(df)  # Nothing to impute if only one row.
-
-        imputed <- numeric(k - 1)
-        for (j in 1:(k - 1)) {
-          if (is.null(round)) {
-            imputed[j] <- runif(1, min = df$tstop[j], max = df$tstop[j + 1])
-          } else {
-            step <- 10^(-round)
-            lower <- ceiling(df$tstop[j] * 10^round) / 10^round
-            grid_max <- df$tstop[j + 1] - step
-            if (grid_max < lower) {
-              imputed[j] <- round(runif(1, min = df$tstop[j], max = df$tstop[j + 1]), round)
-            } else {
-              possible_vals <- seq(lower, grid_max, by = step)
-              if (length(possible_vals) == 0) {
-                imputed[j] <- round(runif(1, min = df$tstop[j], max = df$tstop[j + 1]), round)
-              } else {
-                imputed[j] <- sample(possible_vals, 1)
-              }
-            }
-          }
-        }
-        df$tstop[1] <- imputed[1]
-        if (k > 2) {
-          for (j in 2:(k - 1)) {
-            df$tstart[j] <- imputed[j - 1]
-            df$tstop[j] <- imputed[j]
-          }
-        }
-        df$tstart[k] <- imputed[k - 1]
-        return(df)
-      }) %>% ungroup()
-
-    return(data_interval)
-
-  } else {
-    stop("Censoring type must be one of 'right', 'left', or 'interval'.")
-  }
+  # 3) plot
+  ggplot(df_sum, aes(x = algo, y = mean_cov, fill = ieb)) +
+    # bars
+    geom_col(position = position_dodge(width = 0.75)) +
+    # black CI bars
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                  position = position_dodge(width = 0.75),
+                  width    = 0.2,
+                  colour   = "black") +
+    # dashed red 95% target line
+    geom_hline(yintercept = 0.95,
+               colour      = "red",
+               linetype    = "dashed",
+               linewidth   = 1) +
+    # percent scale with 95% labelled
+    scale_y_continuous(
+      name   = "Coverage",
+      breaks = c(seq(0, 1, by = 0.2), 0.95),
+      labels = percent_format(accuracy = 1)
+    ) +
+    # fill palette
+    scale_fill_brewer(
+      palette = "Dark2",
+      name    = "Model",
+      labels  = c("Base", "IEB")
+    ) +
+    # facets
+    facet_grid(rows = vars(transition),
+               cols = vars(problem)) +
+    theme_bw(base_size = 14) +
+    theme(
+      axis.text.x   = element_text(angle = 45, hjust = 1),
+      panel.spacing = unit(1.2, "lines")
+    )
 }

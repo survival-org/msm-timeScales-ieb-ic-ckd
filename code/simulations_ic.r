@@ -1,22 +1,27 @@
 library(batchtools)
 library(checkmate)
+library(foreach)
+library(doParallel)
 
 # setup ----
-dir_wd <- "C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction"
-# dir_wd <- "/nvmetmp/wis37138/msm_kidneyFunction"
-analysis_type <- "coverage"
-analysis_name <- "baseline"
 
-setwd(dir_wd)
+# setwd("C:/Users/ra56yaf/Desktop/Projects/StaBLab/Survival Analysis/survival_kidneyFunction/msm_kidneyFunction")
+setwd("nvmetmp/wis37138/msm_kidneyFunction")
+analysis_name <- "bh"
+
 source("code/helpers_ic.r")
-registry <- file.path(dir_wd, paste0("results/registries/sim-", analysis_type, "-registry_", analysis_name))
-file_dataset <- file.path(dir_wd, paste0("results/datasets/sim-", analysis_type, "-results_", analysis_name, ".rds"))
-dir_figures <- file.path(dir_wd, paste0("results/figures/sim-", analysis_type, "-results_", analysis_name))
+registry <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
+dir_figures <- file.path("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/figures/ic/", analysis_name)
 
-repls <- 1000
+repls <- 500
 ncores <- 200
-formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6 -1.3*x1"
-formula_weibull <- "~ -3.5 -1.3*x1"
+if(analysis_name == "bh") {
+  formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6"
+  formula_weibull <- "~ -3.5"
+} else if(analysis_name == "fe") {
+  formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6 -1.3*x1"
+  formula_weibull <- "~ -3.5 -1.3*x1"
+}
 
 # set.seed(11022022)
 # a <- wrapper_sim_pexp(data = NULL, job = NULL, n = 500, time_grid = seq(0, 10, by = 0.05), ic = TRUE, ic_mechanism = "equidistant", round = 2)
@@ -28,8 +33,7 @@ formula_weibull <- "~ -3.5 -1.3*x1"
 # d <- wrapper_weibull(data = a, job = NULL, instance = a, ic_point = "end")
 # # e <- wrapper_generalizedGamma(data = a, job = NULL, instance = a, ic_point = "end")
 
-
-# coverage overall hazards ----
+# run ----
 if (test_directory_exists(registry)) {
   unlink(registry, recursive = TRUE)
 }
@@ -97,9 +101,17 @@ if (!test_directory_exists(registry)) {
     ),
     repls = repls)
 
+  start_time <- Sys.time()
   submitJobs(ids = findNotDone())
-  # waitForJobs()
+  waitForJobs()
+  end_time <- Sys.time()
+  print(paste("Total time (in minutes):", as.numeric(difftime(end_time, start_time, units = "mins"))))
 }
+
+# save ----
+analysis_name <- "fe"
+registry <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
+file_dataset <- paste0("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/datasets/sim-ic-results_", analysis_name, ".rds")
 
 reg     <- loadRegistry(registry, writeable = TRUE)
 ids_res <- findExperiments()
@@ -111,37 +123,120 @@ res     <- reduceResultsDataTable(ids=findDone(ids_res)) %>%
   left_join(pars, by = "job.id")
 saveRDS(res, file_dataset)
 
+# bh ----
 
-# coverage baseline ----
-res <- readRDS(file_dataset)
+## load ----
+analysis_name <- "bh"
+registry_bh <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
+reg_bh     <- loadRegistry(registry, writeable = TRUE)
+file_dataset_bh <- paste0("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/datasets/sim-ic-results_", analysis_name, ".rds")
+res_bh <- readRDS(file_dataset)
+dir_figures_bh <- file.path("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/figures/ic/", analysis_name) # only do for analysis_name = "bh"
+
 grouping_vars <- c("problem", "algorithm", "ic_point", "ic_mechanism", "fct")
 
-coverage <- calc_coverage(data = res, grouping_vars = grouping_vars)
-coverage
+# analyses ----
+coverage_bh <- calc_coverage(data = res_bh, grouping_vars = grouping_vars)
+coverage_bh
 View(coverage %>%
-  filter(problem == "sim_pexp" & ic_mechanism == "equidistant" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
-  select(-c(ic_mechanism, problem, `coverage loghazard`)))
+  filter(problem == "sim_icenReg" & ic_mechanism=="beta" & algorithm == "weibull" & ic_point %in% c("mid", "mid_end", "end", "exact", "adjustment")) %>%
+  select(-c(ic_mechanism, `coverage loghazard`)))
 
-# RMSE ----
 rmse <- calc_rmse(data = res, grouping_vars = grouping_vars)
 rmse
 View(rmse %>%
   filter(ic_mechanism=="beta" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
   select(-c(ic_mechanism, `RMSE loghazard`)))
 
-# line plot ----
-scale <- "hazard"
+## plots ----
+scales <- c("loghazard", "hazard", "cumulativehazard", "survivalfunction")
 font_size <- 20
-linePlot <- create_linePlot(data = res, grouping_vars = grouping_vars, scale = scale, font_size = font_size)
-for(i in 1:length(linePlot)) {
-  ggsave(filename = paste0(dir_figures, "/", names(linePlot)[i], ".png"), plot = linePlot[[i]], width = 10, height = 5)
+
+### line plots ----
+start_time <- Sys.time()
+for(scale in scales) {
+  linePlot <- create_linePlot(data = res_bh, grouping_vars = grouping_vars, scale = scale, font_size = font_size, alpha = 0.8)
+
+  num_cores <- min(length(linePlot), parallel::detectCores())
+  registerDoParallel(cores = num_cores)
+  if (!dir.exists(file.path(dir_figures_bh, "line_plots"))) {
+    dir.create(file.path(dir_figures_bh, "line_plots"), recursive = TRUE)
+  }
+  foreach(i = 1:length(linePlot), .packages = "ggplot2") %dopar% {
+    ggsave(filename = paste0(file.path(dir_figures_bh, "line_plots"), "/", names(linePlot)[i], "_", scale, ".png"),
+          plot = linePlot[[i]], width = 10, height = 8)
+  }
+  stopImplicitCluster()
+}
+end_time <- Sys.time()
+print(paste("Total time for plotting (in minutes):", as.numeric(difftime(end_time, start_time, units = "mins"))))
+
+### coverage barplots ----
+plot_df_bh <- coverage_bh %>%
+  filter((is.na(fct) | fct == "flexsurvreg")) %>%
+  mutate(ic_mechanism = ifelse(problem == "sim_icenReg", "uniform", ic_mechanism))
+
+for(scale in scales) {
+
+  barplots_bh_scale <- plot_coverage_bh(data = plot_df_bh, grouping_vars = c("problem", "ic_mechanism"), scale = scale)
+
+  dir_plots <- file.path(dir_figures_bh, "coverages", scale)
+  if(!dir.exists(dir_plots)) {
+    dir.create(dir_plots, recursive = TRUE)
+  }
+  for(i in 1:length(barplots_bh_scale)) {
+    plot_name <- names(barplots_bh_scale)[i]
+
+    ggsave(filename = paste0(dir_plots, "/", plot_name, ".png"),
+          plot = barplots_bh_scale[[i]], width = 10, height = 8)
+  }
+
 }
 
-# coverage and bias x1 ----
-res_x1 <- readRDS("results/datasets/sim-coverage-results_covariate.rds")
-coverage_x1 <- calc_coverage_beta(data = res_x1, grouping_vars = grouping_vars)
-coverage_x1
+## coverage and bias x1 ----
+analysis_name <- "fe"
+registry <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
+reg     <- loadRegistry(registry, writeable = TRUE)
+file_dataset <- paste0("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/datasets/sim-ic-results_", analysis_name, ".rds")
+dir_figures <- file.path("/nvmetmp/wis37138/msm_kidneyFunction/results/simulations/figures/ic/", analysis_name)
+res <- readRDS(file_dataset)
 
 View(coverage_x1 %>%
-  filter(problem == "sim_pexp" & ic_mechanism=="beta" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
-  select(-c(ic_mechanism, problem)))
+  filter(ic_mechanism=="beta" & ic_point %in% c("mid", "end", "exact", "adjustment")) %>%
+  select(-c(ic_mechanism)))
+
+df_plot <- res %>%
+  filter(
+    problem != "sim_icenReg",
+    algorithm != "generalizedGamma",
+    (is.na(fct) | fct == "flexsurvreg")
+  )
+
+summary_fe <- summarize_fe(data = df_plot, grouping_vars = grouping_vars)
+summary_fe
+
+### coefficient boxplots ----
+boxplots <- plot_coef_fe(data = df_plot, grouping_vars = c("problem", "ic_mechanism"))
+
+if(!dir.exists(file.path(dir_figures, "coefficients"))) {
+  dir.create(file.path(dir_figures, "coefficients"), recursive = TRUE)
+}
+for(i in 1:length(boxplots)) {
+  plot_name <- names(boxplots)[i]
+
+  ggsave(filename = paste0(dir_figures, "/coefficients/", plot_name, ".png"),
+         plot = boxplots[[i]], width = 10, height = 8)
+}
+
+### coverage barplots ----
+barplots <- plot_coverage_fe(data = summary_fe, grouping_vars = c("problem", "ic_mechanism"))
+
+if(!dir.exists(file.path(dir_figures, "coverages"))) {
+  dir.create(file.path(dir_figures, "coverages"), recursive = TRUE)
+}
+for(i in 1:length(barplots)) {
+  plot_name <- names(barplots)[i]
+
+  ggsave(filename = paste0(dir_figures, "/coverages/", plot_name, ".png"),
+         plot = barplots[[i]], width = 10, height = 8)
+}

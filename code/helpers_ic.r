@@ -1,6 +1,7 @@
 library(data.table)
 library(dplyr)
 library(tidyr)
+library(purrr)
 library(lubridate)
 library(stringr)
 library(mvtnorm)
@@ -40,6 +41,9 @@ wrapper_sim_pexp <- function(
   if(ic) {
     ndf <- add_interval_censoring(ndf, max_time = max(ndf$time), visits_min = visits_min, visits_max = visits_max, ic_mechanism = ic_mechanism, round = round) %>%
       filter(time_ic_stop > 0)
+  } else {
+    ndf <- ndf %>%
+      mutate(time = round(time, round))
   }
 
   out <- list(ndf, formula)
@@ -1237,39 +1241,92 @@ wrapper_generalizedGamma <- function(
 # }
 
 # postprocessing ----
+library(dplyr)
+library(purrr)
+
+library(dplyr)
+library(purrr)
+
 calc_coverage <- function(data, grouping_vars = NULL, rounding = 3) {
-
-  required_cols <- c(
-    grouping_vars,
-    "job.id",
-    "loghazard_cov", "hazard_cov", "cumu_cov", "surv_cov"
-  )
-
-  if (!all(required_cols %in% colnames(data))) {
+  # 1) check
+  req <- c(grouping_vars, "job.id",
+           "loghazard_cov", "hazard_cov", "cumu_cov", "surv_cov")
+  if (!all(req %in% names(data))) {
     stop("Data is missing required columns.")
   }
 
-  jobLevel_results <- data %>%
-    {if(!is.null(grouping_vars))
+  # 2) flatten to one row per job (preserves the 0/1 coverage flags)
+  jobLevel <- data %>%
+    { if (!is.null(grouping_vars))
         group_by(., job.id, across(all_of(grouping_vars)))
-    else
-        group_by(., job.id)} %>%
-    summarise(
-      loghazard_cov = mean(loghazard_cov, na.rm = TRUE),
-      hazard_cov = mean(hazard_cov, na.rm = TRUE),
-      cumu_cov = mean(cumu_cov, na.rm = TRUE),
-      surv_cov = mean(surv_cov, na.rm = TRUE)
-    )
+      else
+        group_by(., job.id)
+    } %>%
+    slice_head(n = 1)
 
-  results <- jobLevel_results %>%
-    {if (!is.null(grouping_vars)) group_by(., across(all_of(grouping_vars))) else . } %>%
+  # 3) summarise per group, count successes for binom.test
+  results <- jobLevel %>%
+    { if (!is.null(grouping_vars))
+        group_by(., across(all_of(grouping_vars)))
+      else
+        .
+    } %>%
     summarise(
-      `coverage loghazard` = round(mean(loghazard_cov, na.rm = TRUE), rounding),
-      `coverage hazard` = round(mean(hazard_cov, na.rm = TRUE), rounding),
-      `coverage cumulative hazard` = round(mean(cumu_cov, na.rm = TRUE), rounding),
-      `coverage survival probability` = round(mean(surv_cov, na.rm = TRUE), rounding),
+      coverage_loghazard          = mean(loghazard_cov, na.rm = TRUE),
+      ci_loghazard                = list(
+                                      binom.test(
+                                        x = sum(loghazard_cov == 1, na.rm = TRUE),
+                                        n =  n(),
+                                        p = 0.5
+                                      )$conf.int
+                                    ),
+
+      coverage_hazard             = mean(hazard_cov, na.rm = TRUE),
+      ci_hazard                   = list(
+                                      binom.test(
+                                        x = sum(hazard_cov == 1, na.rm = TRUE),
+                                        n =  n(),
+                                        p = 0.5
+                                      )$conf.int
+                                    ),
+
+      coverage_cumulative_hazard  = mean(cumu_cov, na.rm = TRUE),
+      ci_cumu                     = list(
+                                      binom.test(
+                                        x = sum(cumu_cov == 1, na.rm = TRUE),
+                                        n =  n(),
+                                        p = 0.5
+                                      )$conf.int
+                                    ),
+
+      coverage_survival_probability = mean(surv_cov, na.rm = TRUE),
+      ci_surv                      = list(
+                                      binom.test(
+                                        x = sum(surv_cov == 1, na.rm = TRUE),
+                                        n =  n(),
+                                        p = 0.5
+                                      )$conf.int
+                                    ),
+
       .groups = "drop"
-    )
+    ) %>%
+    # 4) pull out lower/upper and round
+    mutate(
+      coverage_loghazard          = round(coverage_loghazard, rounding),
+      coverage_hazard             = round(coverage_hazard,    rounding),
+      coverage_cumulative_hazard  = round(coverage_cumulative_hazard, rounding),
+      coverage_survival_probability = round(coverage_survival_probability, rounding),
+
+      coverage_loghazard_lower    = round(map_dbl(ci_loghazard, 1), rounding),
+      coverage_loghazard_upper    = round(map_dbl(ci_loghazard, 2), rounding),
+      coverage_hazard_lower       = round(map_dbl(ci_hazard,      1), rounding),
+      coverage_hazard_upper       = round(map_dbl(ci_hazard,      2), rounding),
+      coverage_cumulative_hazard_lower = round(map_dbl(ci_cumu, 1), rounding),
+      coverage_cumulative_hazard_upper = round(map_dbl(ci_cumu, 2), rounding),
+      coverage_survival_probability_lower = round(map_dbl(ci_surv, 1), rounding),
+      coverage_survival_probability_upper = round(map_dbl(ci_surv, 2), rounding)
+    ) %>%
+    select(-ci_loghazard, -ci_hazard, -ci_cumu, -ci_surv)
 
   return(results)
 }
@@ -1396,7 +1453,7 @@ create_linePlot <- function(
       ggtitle(paste("Group:", grp)) +
       theme_bw() +
       theme(
-      legend.position.within = c(0.05, 0.95),
+      legend.position = c(0.05, 0.95),
       legend.justification = c("left", "top"),
       legend.text = element_text(size = font_size),
       legend.title = element_text(size = font_size),
@@ -1410,35 +1467,182 @@ create_linePlot <- function(
 }
 
 
-calc_coverage_beta <- function(data, grouping_vars = NULL, rounding = 3) {
+plot_coverage_bh <- function(data,
+                             grouping_vars = NULL,
+                             scale = c("loghazard", "hazard",
+                                       "cumulativehazard", "survivalfunction")) {
+  scale <- match.arg(scale)
 
-  required_cols <- c(
-    grouping_vars,
-    "job.id",
-    "beta_true", "beta_est", "beta_cov"
-  )
+  # map scale to the appropriate columns
+  var_main  <- switch(scale,
+                      loghazard          = "coverage_loghazard",
+                      hazard             = "coverage_hazard",
+                      cumulativehazard   = "coverage_cumulative_hazard",
+                      survivalfunction   = "coverage_survival_probability")
+  var_lower <- paste0(var_main, "_lower")
+  var_upper <- paste0(var_main, "_upper")
 
-  if (!all(required_cols %in% colnames(data))) {
+  # drop rows where the chosen coverage is NA
+  data <- data %>%
+    filter(!is.na(.data[[var_main]]))
+
+  # 1) split into groups (or overall)
+  groups <- if (!is.null(grouping_vars)) {
+    split(data, data[grouping_vars], drop = TRUE)
+  } else {
+    list(overall = data)
+  }
+
+  # 2) one barplot per group
+  plots <- lapply(names(groups), function(name) {
+    df <- groups[[name]]
+    # ensure algorithm is a factor
+    df$algorithm <- factor(df$algorithm, levels = unique(df$algorithm))
+
+    ggplot(df, aes(x = algorithm,
+                          y = .data[[var_main]],
+                          fill = ic_point)) +
+      geom_col(position = position_dodge(width = 0.8)) +
+      geom_errorbar(aes(ymin = .data[[var_lower]],
+                               ymax = .data[[var_upper]]),
+                    position = position_dodge(width = 0.8),
+                    width = 0.2) +
+      geom_hline(yintercept = 0.95,
+                 color = "orange",
+                 linetype = "dashed") +
+      labs(
+        title = name,
+        x     = "Algorithm",
+        y     = paste("Coverage (", scale, ")", sep = ""),
+        fill  = "IC Point"
+      ) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  names(plots) <- names(groups)
+  plots
+}
+
+
+summarize_fe <- function(data, grouping_vars = NULL, rounding = 3) {
+  # check required columns
+  req <- c(grouping_vars, "job.id", "beta_true", "beta_est", "beta_se", "beta_cov")
+  if (!all(req %in% names(data))) {
     stop("Data is missing required columns.")
   }
 
-  jobLevel_results <- data %>%
-    {if(!is.null(grouping_vars))
+  # collapse to one row per job
+  jobLevel <- data %>%
+    { if (!is.null(grouping_vars))
         group_by(., job.id, across(all_of(grouping_vars)))
-    else
-        group_by(., job.id)} %>%
-    select(all_of(required_cols)) %>%
+      else
+        group_by(., job.id)
+    } %>%
     slice_head(n = 1) %>%
     mutate(beta_bias = beta_est - beta_true)
 
-  results <- jobLevel_results %>%
-    {if (!is.null(grouping_vars)) group_by(., across(all_of(grouping_vars))) else . } %>%
+  # summarise per group
+  res <- jobLevel %>%
+    { if (!is.null(grouping_vars))
+        group_by(., across(all_of(grouping_vars)))
+      else
+        .
+    } %>%
     summarise(
-      `coverage beta` = round(mean(beta_cov, na.rm = TRUE), rounding),
-      `bias beta` = round(mean(beta_bias, na.rm = TRUE), rounding),
+      coverage   = mean(beta_cov, na.rm = TRUE),
+      bias       = mean(beta_bias, na.rm = TRUE),
+      beta_est   = mean(beta_est,  na.rm = TRUE),
+      beta_se    = mean(beta_se,   na.rm = TRUE),
+      ci         = list(
+                     binom.test(
+                       x = sum(beta_cov, na.rm = TRUE),
+                       n = length(beta_cov),
+                       p = 0.5
+                     )$conf.int
+                   ),
       .groups = "drop"
-    )
+    ) %>%
+    mutate(
+      coverage       = round(coverage, rounding),
+      bias           = round(bias,     rounding),
+      beta_est       = round(beta_est, rounding),
+      beta_se        = round(beta_se,  rounding),
+      coverage_lower = round(map_dbl(ci, 1), rounding),
+      coverage_upper = round(map_dbl(ci, 2), rounding)
+    ) %>%
+    select(-ci)
 
-  return(results)
+  return(res)
 }
 
+plot_coef_fe <- function(data, grouping_vars = NULL) {
+  # 1) split into groups (or overall)
+  groups <- if (!is.null(grouping_vars)) {
+    split(data, data[grouping_vars], drop = TRUE)
+  } else {
+    list(overall = data)
+  }
+
+  # 2) one grouped boxplot per group
+  plots <- lapply(names(groups), function(name) {
+    df <- groups[[name]]
+    true_val <- unique(df$beta_true)
+    if (length(true_val) != 1)
+      stop("Group ", name, " has multiple beta_true values.")
+
+    ggplot(df, aes(x = factor(algorithm),
+                   y = beta_est,
+                   fill = ic_point)) +
+      geom_boxplot(position = position_dodge(width = 0.8)) +
+      geom_hline(yintercept = true_val,
+                 color = "orange",
+                 linetype = "dashed") +
+      labs(
+        title = name,
+        x     = "Algorithm",
+        y     = "Estimated Coefficient",
+        fill  = "IC Point"
+      ) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  names(plots) <- names(groups)
+  plots
+}
+
+
+plot_coverage_fe <- function(data, grouping_vars = NULL) {
+  # 1) split into groups (or overall)
+  groups <- if (!is.null(grouping_vars)) {
+    split(data, data[grouping_vars], drop = TRUE)
+  } else {
+    list(overall = data)
+  }
+
+  # 2) one barplot per group
+  plots <- lapply(names(groups), function(name) {
+    df <- groups[[name]]
+    # ensure algorithm is a factor
+    df$algorithm <- factor(df$algorithm, levels = unique(df$algorithm))
+
+    ggplot(df, aes(x = algorithm, y = coverage, fill = ic_point)) +
+      geom_col(position = position_dodge(width = 0.8)) +
+      geom_errorbar(aes(ymin = coverage_lower, ymax = coverage_upper),
+                    position = position_dodge(width = 0.8),
+                    width = 0.2) +
+      geom_hline(yintercept = 0.95, color = "orange", linetype = "dashed") +
+      labs(
+        title = name,
+        x     = "Algorithm",
+        y     = "Coverage",
+        fill  = "IC Point"
+      ) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  names(plots) <- names(groups)
+  plots
+}
