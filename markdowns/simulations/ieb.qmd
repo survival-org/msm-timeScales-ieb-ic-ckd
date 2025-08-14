@@ -1,0 +1,688 @@
+
+---
+title: "Simulating Index Event Bias"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+format:
+  html:
+    documentclass: article
+    keep-md: true
+    toc: true
+    toc-depth: 5
+    embed-resources: true
+    self-contained: true
+---
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ieb"
+```
+
+# Simulation Parameters
+
+## Distribution And Effect Size Of Risk Factors
+
+```{r, include=FALSE}
+dist_x1 <- c("rbinom(n, 1, 0.5)","rnorm(n, 0, 1)", "rnorm(n, 0, 5)")
+dist_x2 <- c("rbinom(n, 1, 0.5)", "rnorm(n, 0, 1)", "rnorm(n, 0, 5)")
+
+betas <- list(
+  moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -3.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.2, beta_1_03 = 0.1,
+               beta_1_12 = 0.2, beta_1_13 = 0.1,
+               beta_2_01 = 0.2, beta_2_03 = 0.0,
+               beta_2_12 = 0.2, beta_2_13 = 0.0),
+  strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -3.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.5, beta_1_03 = 0.0,
+               beta_1_12 = 0.5, beta_1_13 = 0.0,
+               beta_2_01 = 0.5, beta_2_03 = 0.0,
+               beta_2_12 = 0.5, beta_2_13 = 0.0)
+)
+```
+
+## Data Generating Processes
+
+The effect sizes of the risk factors are similar to those of the UMOD SNP.
+
+```{r}
+f_0         <- function(t) 0.10 * t^2 / (0.7 + 0.04 * pmax(0, t - 3)^3)
+g_0         <- function(t) 0.15 * t^2 / (0.9 + 0.01 * pmax(0, t - 1)^3)
+f_1         <- function(t) 0.32 * exp(-0.15 * t)
+f_until_1   <- function(t) 2.50 * exp(-0.60 * t)
+g_1         <- function(t) 0.14 * exp(-0.25 * t)
+g_until_1   <- function(t) 0.14 * exp(-0.25 * t)
+
+f_0_1 <- f_0
+f_0_3 <- g_0
+f_1_2 <- function(t) 0.48 * exp(-0.10 * t)
+f_1_3 <- function(t) 0.16 * exp(-0.30 * t)
+
+formulas_dgp_timeScales <- list(
+  list(from = 0, to = 1,
+    formula = ~
+      f_0(tend) + beta_0_01 + beta_1_01 * x1 + beta_2_01 * x2
+  ),
+  list(
+    from = 0, to = 3,
+    formula = ~
+      g_0(tend) + beta_0_03 + beta_1_03 * x1 + beta_2_03 * x2
+  ),
+  list(
+    from = 1, to = 2,
+    formula = ~
+      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_12 + beta_1_12 * x1 + beta_2_12 * x2
+  ),
+  list(
+    from = 1, to = 3,
+    formula = ~
+      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_13 + beta_1_13 * x1 + beta_2_13 * x2
+  )
+)
+
+formulas_dgp_stratified <- list(
+  list(from = 0, to = 1,
+    formula = ~
+      f_0_1(tend) + beta_0_01 + beta_1_01 * x1 + beta_2_01 * x2
+  ),
+  list(
+    from = 0, to = 3,
+    formula = ~
+      f_0_3(tend) + beta_0_01 + beta_1_03 * x1 + beta_2_03 * x2
+  ),
+  list(
+    from = 1, to = 2,
+    formula = ~
+      f_1_2(tend) + f_until_1(t_until_1) + beta_0_01 + beta_1_12 * x1 + beta_2_12 * x2
+  ),
+  list(
+    from = 1, to = 3,
+    formula = ~
+      f_1_3(tend) + g_until_1(t_until_1) + beta_0_01 + beta_1_13 * x1 + beta_2_13 * x2
+  )
+)
+```
+
+## Other Parameters
+```{r}
+cut <- seq(0, 10, by = 0.1)
+terminal_states <- c(2, 3)
+n <- 5000
+round <- 1
+cens_type <- "right"
+cens_dist <- "weibull"
+cens_params <- c(1.5, 10.0) # shape, scale
+bs <- "ps"
+k <- 20
+```
+
+## Model Formulas
+```{r}
+formula_mod_timeScales <- ped_status ~
+  s(tend, by = trans_to_3, bs = bs, k = k) +
+  s(t_1, by = trans_after_1, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1 + transition * x2
+
+formula_mod_timeScales_ieb <- ped_status ~
+  s(tend, by = trans_to_3, bs = bs, k = k) +
+  s(t_1, by = trans_after_1, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1
+
+formula_mod_stratified <- ped_status ~
+  s(tend, by = transition, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1 + transition * x2
+
+formula_mod_stratified_ieb <- ped_status ~
+  s(tend, by = transition, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1
+```
+
+# Correlations
+
+
+
+## Bernoulli-distributed omitted risk factor (p=0.5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=1)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_bernoulli0.5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal1_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "correlations", "correlation_boxplots_normal5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+## Conclusion
+- No negative correlation in state 0 (by construction)
+- No / little negative correlation in state 1 when omitted risk factor x2 is binary
+- Negative correlation in state 1 when omitted risk factor x2 is normally distributed, increasing in size with increasing variance of x2, up to -0.40
+
+
+
+
+# Coefficients
+
+
+
+## Bernoulli-distributed omitted risk factor (p=0.5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=1)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_bernoulli0.5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal1_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coefficients", "coefficient_boxplots_normal5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+## Conclusion
+- No IEB when omitted risk factor x2 is binary
+- IEB for both 0->1 and 1->2 when omitted risk factor x2 is normally distributed, increasing in size with increasing variance of x2, causing attenuation bias of up to 25% + 25% = 50%
+
+
+
+
+# Coverage
+
+
+
+## Bernoulli-distributed omitted risk factor (p=0.5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_bernoulli0.5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_bernoulli0.5_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=1)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_normal1_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_normal1_strong.png")`){width="100%"}
+:::
+
+:::
+
+
+
+## Normally distributed omitted risk factor (sd=5)
+
+### Bernoulli-distributed included risk factor (p=0.5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_bernoulli0.5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=1)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal1_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+### Normally distributed included risk factor (sd=5)
+
+::: columns
+
+::: column
+**Moderate Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_normal5_moderate.png")`){width="100%"}
+:::
+
+::: column
+**Strong Effect Sizes**
+
+![](`r file.path(dir_figures, "coverages", "coverage_boxplots_normal5_normal5_strong.png")`){width="100%"}
+:::
+
+:::
+
+## Conclusion
+- Good coverage when omitted risk factor x2 is binary
+- Coverage worsens significantly when omitted risk factor x2 is normally distributed, even though the bias (see coefficient plots) is sometimes very small

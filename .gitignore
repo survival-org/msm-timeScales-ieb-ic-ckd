@@ -1,1 +1,4 @@
 results/simulations
+markdowns/**/*.md
+markdowns/**/*_files/
+markdowns/**/libs/

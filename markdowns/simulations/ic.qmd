@@ -1,0 +1,652 @@
+
+---
+title: "Simulating Interval-Censoring"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+format:
+  html:
+    documentclass: article
+    keep-md: true
+    toc: true
+    toc-depth: 5
+    embed-resources: true
+    self-contained: true
+---
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic"
+```
+
+# Simulation Parameters
+
+## Data Generating Processes
+
+The effect sizes of the risk factors are similar to those of the UMOD SNP.
+
+## Other Parameters
+```{r}
+cut <- seq(0, 10, by = 0.1)
+n <- 500
+```
+
+
+## DGPs
+```{r}
+# loghazard formula for sim_pexp and sim_weibull
+
+## baseline hazard analysis
+
+  formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6"
+  formula_weibull <- "~ -3.5"
+
+## fixed effects analysis
+  formula_pexp <- "~ -3.5 + dgamma(t, 8, 2) * 6 -1.3*x1"
+  formula_weibull <- "~ -3.5 -1.3*x1"
+
+# implicit loghazard formula for sim_icenReg
+formula_icenReg = "~log(1.5) - log(4) + (1.5 - 1) * (log(t) - log(4))"
+
+# sim_pexp
+  visits_min = 1
+  visits_max = 10
+  ic_mechanism = c("beta", "uniform", "equidistant")
+
+# sim_weibull
+  shape = 1.5
+  ic = TRUE
+  visits_min = 1
+  visits_max = 10
+  ic_mechanism = c("beta", "uniform", "equidistant")
+
+# sim_icenReg
+  scale = 4
+  shape = 1
+  inspections = 2
+  inspectLength = 2.5
+```
+
+## Censoring Mechanisms
+```{r}
+
+
+  interval_censor_individual_beta <- function(event_time, event_status, visits_min, visits_max, max_time, round) {
+    v <- sample(visits_min:visits_max, 1)
+    params <- mvtnorm::rmvnorm(1, mean = c(0, 0), sigma = diag(2))
+
+    shape1 <- abs(params[1]) + 0.5
+    shape2 <- abs(params[2]) + 0.5
+
+    quantiles <- seq(0, 1, length.out = v + 2)[-c(1, v + 2)]
+    obs_times <- sort(qbeta(quantiles, shape1 = shape1, shape2 = shape2) * max_time)
+
+    if(!is.null(round)) {
+      obs_times <- round(obs_times, round)
+    }
+
+    obs_times_full <- c(0, obs_times)
+
+    interval_index <- findInterval(event_time, obs_times_full)
+
+    if (interval_index == length(obs_times_full)) {
+      # event time exceeds largest observed time: censored after last interval
+      time_ic_start <- obs_times_full[interval_index - 1]
+      time_ic_stop  <- obs_times_full[interval_index]
+      status_ic <- 0
+    } else {
+      # event time falls between observed interval points
+      time_ic_start <- obs_times_full[interval_index]
+      time_ic_stop  <- obs_times_full[interval_index + 1]
+      status_ic <- ifelse(event_status == 1, 1, 0)
+    }
+
+    return(c(time_ic_start = time_ic_start,
+            time_ic_stop = time_ic_stop,
+            status_ic = status_ic))
+  }
+
+  interval_censor_individual_uniform <- function(event_time, event_status, visits_min, visits_max, max_time, round_digits) {
+    v <- sample(visits_min:visits_max, 1)
+
+    param <- rnorm(1, mean = 0, sd = 1)
+    jitter_sd <- abs(param) + 0.1
+
+    even_times <- seq(0, max_time, length.out = v + 2)[-c(1, v + 2)]
+    jittered_times <- even_times + rnorm(v, mean = 0, sd = jitter_sd)
+
+    # Ensure jittered times are strictly within (0, max_time)
+    jittered_times <- sort(jittered_times[jittered_times > 0 & jittered_times < max_time])
+
+    # Explicit correction: if no valid jittered times, use max_time as the single interval time
+    if (length(jittered_times) == 0) {
+      jittered_times <- max_time
+    }
+
+    if (!is.null(round_digits)) {
+      jittered_times <- round(jittered_times, round_digits)
+    }
+
+    obs_times_full <- c(0, jittered_times)
+
+    interval_index <- findInterval(event_time, obs_times_full)
+
+    if (interval_index == length(obs_times_full)) {
+      time_ic_start <- obs_times_full[interval_index - 1]
+      time_ic_stop  <- obs_times_full[interval_index]
+      status_ic <- 0
+    } else {
+      time_ic_start <- obs_times_full[interval_index]
+      time_ic_stop  <- obs_times_full[interval_index + 1]
+      status_ic <- ifelse(event_status == 1, 1, 0)
+    }
+
+    return(c(time_ic_start = time_ic_start,
+            time_ic_stop = time_ic_stop,
+            status_ic = status_ic))
+  }
+
+  interval_censor_individual_equidistant <- function(event_time, event_status, visits_min, visits_max, max_time, round_digits) {
+    breaks <- seq(0, max_time, length.out = visits_max + 1)
+
+    if (!is.null(round_digits)) {
+      breaks <- round(breaks, round_digits)
+      breaks <- sort(unique(breaks))
+    }
+
+    interval_index <- findInterval(event_time, breaks, rightmost.closed = TRUE)
+
+    # Ensure valid interval
+    interval_index <- min(max(interval_index, 1), length(breaks) - 1)
+
+    time_ic_start <- breaks[interval_index]
+    time_ic_stop  <- breaks[interval_index + 1]
+    status_ic <- event_status
+
+    return(c(time_ic_start = time_ic_start,
+             time_ic_stop = time_ic_stop,
+             status_ic = status_ic))
+  }
+
+```
+
+# Models
+```{r}
+
+wrapper_pam <- function(
+  data,
+  job,
+  instance,
+  bs = "ps",
+  k = 10,
+  ic_point = c("mid", "end", "mid_end", "exact", "oracle")) {}
+
+
+wrapper_cox <- function(
+  data,
+  job,
+  instance,
+  ic_point = c("mid", "end", "exact", "oracle")) {}
+
+wrapper_weibull <- function(
+  data,
+  job,
+  instance,
+  ic_point = c("mid", "end", "exact", "oracle", "adjustment"),
+  fct = c("flexsurvreg", "survreg")
+  ) {}
+
+```
+
+# Fixed Effects
+
+## Coefficients
+
+### Piecewise Exponential DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_pexp.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_pexp.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_pexp.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+
+### Weibull DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_weibull.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_weibull.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coefficients", "sim_weibull.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+
+## Coverages
+
+### Piecewise Exponential DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_pexp.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_pexp.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_pexp.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+
+### Weibull DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_weibull.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_weibull.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "fe", "coverages", "sim_weibull.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+## Conclusion
+
+- Coverage of fixed effect hazards is as desired across all DGPs, IC mechanisms, algorithms, and IC points
+
+
+# Baseline Hazards
+
+## Illustration of individual baseline log-hazard estimations
+
+### Piecewise Exponential DGP
+:::: {layout-ncol=3}
+
+::: {.column}
+**pexp beta pam mid**
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/loghazard/sim_pexp/pam/"
+```
+
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_beta_NA_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**pexp uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_uniform_NA_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**pexp equidistant pam mid**
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_equidistant_NA_loghazard.png")`){width="100%"}
+:::
+
+
+::::
+
+### Weibull DGP
+:::: {layout-ncol=3}
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/loghazard/sim_weibull/pam/"
+```
+
+
+::: {.column}
+**weibull beta pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_beta_NA_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**weibull uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_uniform_NA_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**weibull equidistant pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_equidistant_NA_loghazard.png")`){width="100%"}
+:::
+
+
+::::
+
+### icenReg DGP
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/loghazard/sim_icenReg/pam/"
+```
+
+**icenReg uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_icenReg_pam_mid_NA_NA_loghazard.png")`){width="100%"}
+
+
+## Illustration of individual baseline cumulative hazard estimations
+
+### Piecewise Exponential DGP
+:::: {layout-ncol=3}
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/cumulativehazard/sim_pexp/pam/"
+```
+
+::: {.column}
+**pexp beta pam mid**
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_beta_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+::: column
+**pexp uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_uniform_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+::: column
+**pexp equidistant pam mid**
+
+![](`r paste0(dir_figures, "sim_pexp_pam_mid_equidistant_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+
+::::
+
+### Weibull DGP
+:::: {layout-ncol=3}
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/cumulativehazard/sim_weibull/pam/"
+```
+
+::: {.column}
+**weibull beta pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_beta_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+::: column
+**weibull uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_uniform_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+::: column
+**weibull equidistant pam mid**
+
+![](`r paste0(dir_figures, "sim_weibull_pam_mid_equidistant_NA_cumulativehazard.png")`){width="100%"}
+:::
+
+
+::::
+
+### icenReg DGP
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic/bh/line_plots/cumulativehazard/sim_icenReg/pam/"
+```
+
+**icenReg uniform pam mid**
+
+![](`r paste0(dir_figures, "sim_icenReg_pam_mid_NA_NA_cumulativehazard.png")`){width="100%"}
+
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/ic"
+```
+
+## Coverage of Baseline Log-Hazards
+
+### Piecewise Exponential DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_pexp.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_pexp.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_pexp.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### Weibull DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_weibull.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_weibull.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_weibull.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### icenReg DGP
+
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "loghazard", "sim_icenReg.uniform.png")`){width="33%"}
+
+
+## Coverage of Baseline Cumulative Hazards
+
+### Piecewise Exponential DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_pexp.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_pexp.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_pexp.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### Weibull DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_weibull.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_weibull.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_weibull.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### icenReg DGP
+
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "cumulativehazard", "sim_icenReg.uniform.png")`){width="33%"}
+
+
+## Coverage of Baseline Survival Functions
+
+### Piecewise Exponential DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_pexp.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_pexp.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_pexp.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### Weibull DGP
+
+:::: {layout-ncol=3}
+
+::: {.column}
+**Beta IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_weibull.beta.png")`){width="100%"}
+:::
+
+::: column
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_weibull.uniform.png")`){width="100%"}
+:::
+
+::: column
+**Equidistant IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_weibull.equidistant.png")`){width="100%"}
+
+:::
+
+
+::::
+
+### icenReg DGP
+
+**Uniform IC Mechanism**
+
+![](`r file.path(dir_figures, "bh", "coverages", "survivalfunction", "sim_icenReg.uniform.png")`){width="33%"}
+
+
+## Conclusion
+
+- If adjustment for IC is not possible, the interval midpoint is always always the better choice than the interval endpoint
+- The coverage of baseline loghazards by PAMs is between 50% and 75%, depending on specifications
+- The coverage of baseline cumulative hazards by PAMs is much higher, between 85% and 97%, depending on specifications
+- The coverage of baseline survival functions by PAMs is similar to that of the baseline cumulative hazards
+- The stark difference between coverage of baseline loghazards versus baseline cumulative hazards is likely
+due to poor estimation / bias of loghazards for very small and very large t

@@ -1,0 +1,517 @@
+
+---
+title: "Simulating Multiple Time Scales"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+format:
+  html:
+    documentclass: article
+    keep-md: true
+    toc: true
+    toc-depth: 5
+    embed-resources: true
+    self-contained: true
+---
+
+# Simulation Parameters
+
+## Data Generating Processes
+
+The effect sizes of the risk factors are similar to those of the UMOD SNP.
+
+```{r}
+f_0         <- function(t) 0.10 * t^2 / (0.7 + 0.04 * pmax(0, t - 3)^3)
+g_0         <- function(t) 0.15 * t^2 / (0.9 + 0.01 * pmax(0, t - 1)^3)
+f_1         <- function(t) 0.32 * exp(-0.15 * t)
+f_until_1   <- function(t) 2.50 * exp(-0.60 * t)
+g_1         <- function(t) 0.14 * exp(-0.25 * t)
+g_until_1   <- function(t) 0.14 * exp(-0.25 * t)
+
+f_0_1 <- f_0
+f_0_3 <- g_0
+f_1_2 <- function(t) 0.48 * exp(-0.10 * t)
+f_1_3 <- function(t) 0.16 * exp(-0.30 * t)
+
+delta_0   <- -1.0 # to achieve desired type I censoring rate
+
+beta_0_01 <- -2.9 + delta_0
+beta_0_03 <- -3 + delta_0
+beta_0_12 <- -2.4 + delta_0
+beta_0_13 <- -2.4 + delta_0
+
+beta_1_01 <- 0.2
+beta_1_03 <- 0.1
+beta_1_12 <- 0.2
+beta_1_13 <- 0.1
+
+formulas_dgp_timeScales <- list(
+  list(from = 0, to = 1,
+    formula = ~
+      f_0(tend) + beta_0_01 + beta_1_01 * x1 + beta_2_01 * x2
+  ),
+  list(
+    from = 0, to = 3,
+    formula = ~
+      g_0(tend) + beta_0_03 + beta_1_03 * x1 + beta_2_03 * x2
+  ),
+  list(
+    from = 1, to = 2,
+    formula = ~
+      f_0(tend) + f_1(t_1) + f_until_1(t_until_1) + beta_0_12 + beta_1_12 * x1 + beta_2_12 * x2
+  ),
+  list(
+    from = 1, to = 3,
+    formula = ~
+      g_0(tend) + g_1(t_1) + g_until_1(t_until_1) + beta_0_13 + beta_1_13 * x1 + beta_2_13 * x2
+  )
+)
+
+formulas_dgp_stratified <- list(
+  list(from = 0, to = 1,
+    formula = ~
+      f_0_1(tend) + beta_0_01 + beta_1_01 * x1 + beta_2_01 * x2
+  ),
+  list(
+    from = 0, to = 3,
+    formula = ~
+      f_0_3(tend) + beta_0_01 + beta_1_03 * x1 + beta_2_03 * x2
+  ),
+  list(
+    from = 1, to = 2,
+    formula = ~
+      f_1_2(tend) + f_until_1(t_until_1) + beta_0_01 + beta_1_12 * x1 + beta_2_12 * x2
+  ),
+  list(
+    from = 1, to = 3,
+    formula = ~
+      f_1_3(tend) + g_until_1(t_until_1) + beta_0_01 + beta_1_13 * x1 + beta_2_13 * x2
+  )
+)
+```
+
+## Other Parameters
+```{r}
+cut <- seq(0, 10, by = 0.1)
+terminal_states <- c(2, 3)
+n <- 5000
+round <- 1
+cens_type <- "right"
+cens_dist <- "weibull"
+cens_params <- c(1.5, 10.0) # shape, scale
+bs <- "ps"
+k <- 20
+```
+
+## Model Formulas
+```{r}
+formula_mod_timeScales <- ped_status ~
+  s(tend, by = trans_to_3, bs = bs, k = k) +
+  s(t_1, by = trans_after_1, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1 + transition * x2
+
+formula_mod_timeScales_ieb <- ped_status ~
+  s(tend, by = trans_to_3, bs = bs, k = k) +
+  s(t_1, by = trans_after_1, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1
+
+formula_mod_stratified <- ped_status ~
+  s(tend, by = transition, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1 + transition * x2
+
+formula_mod_stratified_ieb <- ped_status ~
+  s(tend, by = transition, bs = bs, k = k) +
+  s(t_until_1, by = trans_after_1, bs = bs, k = k) +
+  transition * x1
+```
+
+# Illustration of individual baseline hazard estimations
+
+## 0->1 Transition
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales/line_and_slice_plots/0->1"
+```
+
+### Time Scales DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_stratified_bh_algo_timeScales_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_stratified_bh_algo_timeScales_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Time Scales DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_stratified_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->1_sim_stratified_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+
+## 0->3 Transition
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales/line_and_slice_plots/0->3"
+```
+
+### Time Scales DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_stratified_bh_algo_timeScales_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_stratified_bh_algo_timeScales_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Time Scales DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_stratified_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "0->3_sim_stratified_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+## 1->2 Transition
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales/line_and_slice_plots/1->2"
+```
+
+### Time Scales DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_stratified_bh_algo_timeScales_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_stratified_bh_algo_timeScales_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Time Scales DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_stratified_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->2_sim_stratified_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+## 1->3 Transition
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales/line_and_slice_plots/1->3"
+```
+
+### Time Scales DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Time Scales Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_stratified_bh_algo_timeScales_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_stratified_bh_algo_timeScales_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Time Scales DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_timeScales_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_timeScales_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+### Stratified DGP And Stratified Model
+
+::: columns
+
+::: column
+**Penalized Splines**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_stratified_bh_algo_stratified_ps_loghazard.png")`){width="100%"}
+:::
+
+::: column
+**Factor Smooth**
+
+![](`r file.path(dir_figures, "loghazard", "1->3_sim_stratified_bh_algo_stratified_fs_loghazard.png")`){width="100%"}
+:::
+
+:::
+
+## Conclusion
+
+In terms of loghazards, deviation from the ground truth (and accordingly low coverage) mostly occurs
+- for the multiple time scales model on data from a stratified DGP, especially for transitions 0->1 and 0->3, regardless of smooth
+- for both models on data from a multiple time scales DGP for transitions 1->2 and 1->3, for the factor smooth
+
+# Coverage of Baseline Hazards
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales"
+```
+
+## 0->1 Transition
+
+![](`r file.path(dir_figures, "bh_coverage_0->1.png")`){width="100%"}
+
+## 0->3 Transition
+
+![](`r file.path(dir_figures, "bh_coverage_0->3.png")`){width="100%"}
+
+## 1->2 Transition
+
+![](`r file.path(dir_figures, "bh_coverage_1->2.png")`){width="100%"}
+
+## 1->3 Transition
+
+![](`r file.path(dir_figures, "bh_coverage_1->3.png")`){width="100%"}
+
+## Conclusion
+
+The stratified model has better coverage than the multiple time scales model, even if the true DGP has multiple time scales.
+There are no big differences between smooths.
+
+# Bias And RMSE Over Time
+
+## 0->1 And 0->3 Transitions
+
+![](`r file.path(dir_figures, "bias_rmse_events_0-1_0-3.png")`){width="100%"}
+
+A multiple time scales model fitted on data from a stratified DGP produces large bias
+(negative for time points with many events, positive for time points with few events) and large RMSE.
+In contrast, the stratified model fitted on data from a multiple time scales DGP does not so much, performing similarly to models that are not misspecified.
+
+# Coverage Of Fixed Effects
+
+```{r, include=FALSE}
+dir_figures <- "../../results/simulations/figures/timeScales"
+```
+
+![](`r file.path(dir_figures, "fixedEffects_all.png")`){width="100%"}
+
+## Conclusion
+
+Binary covariates (p=0.5) are covered very well
+
+- for all transitions
+- for both DGPs and both models (i.e., even in case of model misspecification)
+- for both smooth effect estimations (penalized spline versus factor smooth)
+
+
+# Summary
+
+Overall, we observe that
+
+- both the multiple time scales model and the stratified model have good coverage of fixed effects, regardless of DGP
+- the stratified model performs better (smaller bias and lower RMSE) under misspecification and similarly under no misspecification - which is in line with lower AIC for the stratified model on the empirical kidney data
+
+Also in the leukemia example of Iacobelli and Carstensen (2013), who actively propose and advertise the multiple time scales model (or rather modeling approach),
+the second time scale (time-since-relapse) is eventually dropped from the model due to lack of explanatory power.
+
+So, when and why would we ever use a multiple time scales model? Only
+
+- (i) under the assumption of a multiple time scales AND
+- (ii) if the quantity of interest is precisely the other time scale(s), which is/are not explicitly estimated by a stratified model
