@@ -690,7 +690,7 @@ create_fe_table <- function(df, grouping_vars = character()) {
 }
 
 
-create_coverage_summary_fe <- function(df, grouping_vars = character()) {
+summarize_coverage_fe <- function(df, grouping_vars = character()) {
 
   df <- df %>%
     mutate(
@@ -1491,7 +1491,7 @@ generate_coverage_latex_bh <- function(summary_df) {
   header <- c(
     "\\begin{table*}[htbp]", "\\centering", "\\caption{\\captiontsbhcoverage}",
     "\\label{tab:sim-ts-bh-coverage}", "\\begin{sideways}",
-    # --- CHANGE 2: Further reduce inter-column space ---
+    "\\footnotesize",
     "\\setlength{\\tabcolsep}{2.5pt}",
     tabular_def, "\\toprule",
     dgp_header_line, paste(dgp_cmidrules, collapse = " "),
@@ -1520,7 +1520,7 @@ generate_coverage_latex_bh <- function(summary_df) {
     body_rows <- c(body_rows, paste0(full_row, " \\\\"))
   }
 
-  footer <- c("\\bottomrule", "\\end{tabular}", "\\end{sideways}", "\\end{table*}")
+footer <- c("\\bottomrule", "\\end{tabular}", "\\normalsize", "\\end{sideways}", "\\end{table*}")
   full_latex_code <- paste(c(header, body_rows, footer), collapse = "\n")
   return(full_latex_code)
 }

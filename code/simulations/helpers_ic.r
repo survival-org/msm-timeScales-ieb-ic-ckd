@@ -1618,7 +1618,7 @@ plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {  # new fo
       ) +
       theme_bw() +
       theme(
-        axis.text.x  = element_text(angle = 45, hjust = 1, size = font_size),
+        axis.text.x  = element_text(angle = 30, hjust = 1, size = font_size),
         axis.text.y  = element_text(size = font_size),
         axis.title.y = element_text(size = font_size),
         legend.text  = element_text(size = font_size),
@@ -1667,6 +1667,69 @@ plot_coverage_fe <- function(data, grouping_vars = NULL) {
 }
 
 
+pick <- function(lst, problem, ic) {
+  nm <- paste(problem, ic, sep = ".")
+  p <- lst[[nm]]
+  if (is.null(p)) stop("Plot not found for ", nm)
+  p
+}
+
+
+tweak_bh <- function(p, show_x = TRUE, show_legend = FALSE, title = NULL,
+                  hide_y_text = FALSE, title_size = 24, y_label = NULL) {
+  if (!show_x) {
+    p <- p + theme(axis.title.x = element_blank(),
+                   axis.text.x  = element_blank())
+  }
+  if (!is.null(y_label)) {
+    p <- p + labs(y = y_label)
+  }
+  if (hide_y_text) {
+    p <- p + theme(axis.title.y = element_blank(),
+                   axis.text.y  = element_blank())
+  }
+  if (!show_legend) p <- p + theme(legend.position = "none")
+  if (!is.null(title)) {
+    p <- p + ggtitle(title) +
+      theme(plot.title = element_text(face = "bold", size = title_size, hjust = 0.5))
+  }
+  p
+}
+
+tweak_fe <- function(p, title = NULL, ic_mechanism = NULL, show_x = TRUE, show_y = TRUE, title_size = 24, y_label = NULL) {
+  # Dynamically set the y-axis label with the given IC mechanism
+  if (!is.null(ic_mechanism)) {
+    y_label <- as.expression(bquote(hat(beta)[x[1]] ~ .(ic_mechanism)))  # Dynamic y-axis label
+  }
+
+  # Hide x-axis title and labels if show_x is FALSE
+  if (!show_x) {
+    p <- p + theme(axis.title.x = element_blank(),
+                   axis.text.x  = element_blank())  # Hide x-axis labels
+  }
+
+  # Hide y-axis title and labels if show_y is FALSE
+  if (!show_y) {
+    p <- p + theme(axis.title.y = element_blank(),
+                   axis.text.y  = element_blank(),
+                   axis.ticks.y = element_blank()) # Hide y-axis elements
+  }
+
+  # Add dynamic y-axis label if provided
+  if (!is.null(y_label) && show_y) { # also check show_y here
+    p <- p + labs(y = y_label)
+  }
+
+  # Add title and style it
+  if (!is.null(title)) {
+    p <- p + ggtitle(title) +
+      theme(plot.title = element_text(face = "bold", size = title_size, hjust = 0.5))
+  }
+
+  p
+}
+
+
 # tables ----
 
 ## bh ----
@@ -1697,11 +1760,11 @@ create_coverage_summary_bh <- function(data, coverage_type, rounding_digits = 2)
         problem == "sim_icenReg" ~ "icenReg DGP",
         TRUE ~ as.character(problem)
       ),
-      algorithm = case_when(
-        algorithm == "pam" ~ "PAM",
-        algorithm == "generalizedGamma" ~ "GenGamma",
-        TRUE ~ str_to_title(as.character(algorithm))
-      ),
+      # algorithm = case_when(
+      #   algorithm == "pam" ~ "PAM",
+      #   algorithm == "generalizedGamma" ~ "GenGamma",
+      #   TRUE ~ str_to_title(as.character(algorithm))
+      # ),
       ic_point = str_to_title(as.character(ic_point)),
       ic_mechanism = str_to_title(as.character(ic_mechanism)),
       # Create the formatted string, robustly handling NA/NaN
@@ -1795,8 +1858,7 @@ generate_multi_dgp_latex <- function(summary_df, coverage_type) {
     caption_line,
     label_line,
     "\\begin{sideways}",
-    # *** THIS IS THE KEY CHANGE TO MAKE THE TABLE NARROWER ***
-    # We set a smaller column separation. Default is 6pt.
+    "\\footnotesize",
     "\\setlength{\\tabcolsep}{4pt}",
     tabular_def, "\\toprule",
     multicolumn_line, cmidrule_line, paste0(mechanism_header_line, " \\\\"), "\\midrule"
@@ -1821,7 +1883,13 @@ generate_multi_dgp_latex <- function(summary_df, coverage_type) {
     }
   }
 
-  footer <- c("\\bottomrule", "\\end{tabular}", "\\end{sideways}", "\\end{table*}")
+  footer <- c(
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\normalsize",
+    "\\end{sideways}",
+    "\\end{table*}"
+  )
   full_latex_code <- paste(c(header, body_rows, footer), collapse = "\n")
   return(full_latex_code)
 }
@@ -1833,7 +1901,7 @@ create_bias_summary_fe <- function(data, rounding_digits = 2) {
 
   processed_data <- data %>%
     mutate(
-      algorithm = case_when(algorithm == "pam" ~ "PAM", TRUE ~ str_to_title(algorithm)),
+      # algorithm = case_when(algorithm == "pam" ~ "PAM", TRUE ~ str_to_title(algorithm)),
       ic_point = str_replace(str_to_title(ic_point), "Adjustment", "Adj."),
       ic_mechanism = str_to_title(ic_mechanism),
       problem_label = case_when(
@@ -1874,7 +1942,7 @@ create_coverage_summary_fe <- function(data, rounding_digits = 2) {
 
   processed_data <- data %>%
     mutate(
-      algorithm = case_when(algorithm == "pam" ~ "PAM", TRUE ~ str_to_title(algorithm)),
+      # algorithm = case_when(algorithm == "pam" ~ "PAM", TRUE ~ str_to_title(algorithm)),
       ic_point = str_replace(str_to_title(ic_point), "Adjustment", "Adj."),
       ic_mechanism = str_to_title(ic_mechanism),
       problem_label = case_when(
@@ -1973,6 +2041,7 @@ generate_coverage_latex_fe <- function(summary_df) {
   header <- c(
     "\\begin{table*}[htbp]", "\\centering", "\\caption{\\captionicfecoverage}",
     "\\label{tab:sim-ic-fe-coverage}", "\\begin{sideways}",
+    "\\footnotesize",
     "\\setlength{\\tabcolsep}{4pt}",
     "\\begin{tabular}{llcccccc}",
     "\\toprule", "& & \\multicolumn{3}{c}{Piecewise Exponential DGP} & \\multicolumn{3}{c}{Weibull DGP} \\\\",
@@ -1999,7 +2068,7 @@ generate_coverage_latex_fe <- function(summary_df) {
     }
   }
 
-  footer <- c("\\bottomrule", "\\end{tabular}", "\\end{sideways}", "\\end{table*}")
+  footer <- c("\\bottomrule", "\\end{tabular}", "\\normalsize", "\\end{sideways}", "\\end{table*}")
   full_latex_code <- paste(c(header, body_rows, footer), collapse = "\n")
   return(full_latex_code)
 }
