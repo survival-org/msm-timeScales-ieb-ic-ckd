@@ -7,14 +7,14 @@ library(patchwork)
 # setup ----
 
 setwd("nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd")
-source("code/ukb/helpers_sim.r")
-source("code/ukb/helpers_ieb.r")
+source("code/simulations/helpers_sim.r")
+source("code/simulations/helpers_ieb.r")
 
 registry <- "results/simulations/registries/sim-ieb-registry"
 dir_datasets <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/datasets/"
 dir_figures <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/figures/ieb/"
 repls <- 500
-ncores <- 200
+ncores <- 240
 seed <- 11022022
 
 # simulation parameters ----
@@ -132,8 +132,11 @@ sim_statics <- setNames(
 # dist_x1 <- c("rbinom(n, 1, 0.2)", "rbinom(n, 1, 0.5)", "rbinom(n, 1, 0.8)", "rnorm(n, 0, 1)", "rnorm(n, 0, 2)", "rnorm(n, 0, 5)")
 # dist_x2 <- c("rbinom(n, 1, 0.2)", "rbinom(n, 1, 0.5)", "rbinom(n, 1, 0.8)", "rnorm(n, 0, 1)", "rnorm(n, 0, 2)", "rnorm(n, 0, 5)")
 
-dist_x1 <- c("rnorm(n, 0, 5)")
+dist_x1 <- c("rbinom(n, 1, 0.5)", "rnorm(n, 0, 1)")
 dist_x2 <- c("rbinom(n, 1, 0.5)", "rnorm(n, 0, 1)")
+
+# dist_x1 <- c("rnorm(n, 0, 1)")
+# dist_x2 <- c("rnorm(n, 0, 1)")
 
 # dist_x1 <- c("rbinom(n, 1, 0.5)", "rnorm(n, 0, 1)", "rnorm(n, 0, 5)")
 # dist_x2 <- c("rbinom(n, 1, 0.5)", "rnorm(n, 0, 1)", "rnorm(n, 0, 5)")
@@ -147,16 +150,22 @@ prob_df_dist <- expand.grid(
 betas <- list(
   moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -3.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.2, beta_1_03 = 0.1,
-               beta_1_12 = 0.2, beta_1_13 = 0.1,
+               beta_1_01 = 0.2, beta_1_03 = 0.0,
+               beta_1_12 = 0.2, beta_1_13 = 0.0,
                beta_2_01 = 0.2, beta_2_03 = 0.0,
                beta_2_12 = 0.2, beta_2_13 = 0.0),
   strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -3.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.5, beta_1_03 = 0.0,
-               beta_1_12 = 0.5, beta_1_13 = 0.0,
-               beta_2_01 = 0.5, beta_2_03 = 0.0,
-               beta_2_12 = 0.5, beta_2_13 = 0.0)
+               beta_1_01 = 0.4, beta_1_03 = 0.0,
+               beta_1_12 = 0.4, beta_1_13 = 0.0,
+               beta_2_01 = 0.4, beta_2_03 = 0.0,
+               beta_2_12 = 0.4, beta_2_13 = 0.0),
+  extreme  = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -4.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.6, beta_1_03 = 0.0,
+               beta_1_12 = 0.6, beta_1_13 = 0.0,
+               beta_2_01 = 0.6, beta_2_03 = 0.0,
+               beta_2_12 = 0.6, beta_2_13 = 0.0)
 )
 
 ## model formulas ----
@@ -192,7 +201,7 @@ formula_mod_list <- list(
 # trouble shooting ----
 set.seed(123)
 n <- 5000
-data <- sim_statics$timeScales
+data <- sim_statics$stratified
 # formulas_dgp <- formulas_dgp_timeScales
 formulas_dgp <- formulas_dgp_stratified
 prob_df <- prob_df_dist %>%
@@ -201,12 +210,12 @@ prob_df <- prob_df_dist %>%
     beta_vals = map(beta_scenario, ~ betas[[.x]])
   )
 # dist_x1 <- "rbinom(n, 1, 0.5)"
-dist_x1 <- "rnorm(n, 0, 5)"
+dist_x1 <- "rnorm(n, 0, 1)"
 dist_x2 <- "rnorm(n, 0, 1)"
-beta_vals <- prob_df$beta_vals[18]
+beta_vals <- prob_df$beta_vals[1]
 
 instance <- wrapper_sim(
-  job = NULL, data = data, formulas_dgp = formulas_dgp_timeScales, dist_x1 = dist_x1, dist_x2 = dist_x2, beta_vals = beta_vals,
+  job = NULL, data = data, formulas_dgp = formulas_dgp, dist_x1 = dist_x1, dist_x2 = dist_x2, beta_vals = beta_vals,
   terminal_states = terminal_states, cut = cut, n = n, round = 2, cens_type = cens_type,
   cens_dist = cens_dist, cens_params = cens_params
 )
@@ -436,26 +445,6 @@ res_cor <- reduceResultsDataTable(ids = ids_res_cor) %>%
 saveRDS(res_cor, paste0(dir_datasets, "sim-ieb-results_cor.rds"))
 res_cor <- readRDS(paste0(dir_datasets, "sim-ieb-results_cor.rds"))
 
-# summarize results ----
-msm_summary <- res_msm %>%
-  group_by(transition, problem, formula_name, dist_x1_x2) %>%
-  summarise(
-    coef_mean = mean(coefficient),
-    bias_mean = mean(bias),
-    coverage_mean = mean(coverage)
-  )
-
-cor_summary <- res_cor %>%
-  group_by(problem, dist_x1_x2, from) %>%
-  summarise(
-    rho_mean = mean(rho),
-    rho_ci = list(round(quantile(rho, probs = c(0.025, 0.975)), 4))
-    ) %>%
-    mutate(
-      rho_lower = map_dbl(rho_ci, ~ .[1]),
-      rho_upper = map_dbl(rho_ci, ~ .[2]),
-      rho_ci = map_chr(rho_ci, ~ paste0("(", .[1], ", ", .[2], ")")))
-
 # plot results ----
 problem_labs <- c(sim_stratified = "SSTS DGP", sim_timeScales = "MTS DGP")
 
@@ -515,22 +504,22 @@ for(dist in distinct_dist_x1_x2) {
         paste0("coefficient_boxplots_",
                dist, "_", scn, ".png")
       ),
-      plot   = p1,
+      plot   = p1[[1]] / p1[[2]],
       width  = 8, height = 8
     )
 
-    # 2) coverage barplot
-    p2 <- plot_coverage(df_sub)
-    ggsave(
-      filename = file.path(
-        dir_figures,
-        "coverages",
-        paste0("coverage_boxplots_",
-               dist, "_", scn, ".png")
-      ),
-      plot   = p2,
-      width  = 8, height = 8
-    )
+  #   # 2) coverage barplot
+  #   p2 <- plot_coverage(df_sub)
+  #   ggsave(
+  #     filename = file.path(
+  #       dir_figures,
+  #       "coverages",
+  #       paste0("coverage_boxplots_",
+  #              dist, "_", scn, ".png")
+  #     ),
+  #     plot   = p2,
+  #     width  = 8, height = 8
+  #   )
   }
 }
 
@@ -545,18 +534,18 @@ df_left <- res_cor %>%
 
 # 2. Create the LEFT plot and add the plotmath title
 p_left <- plot_cor(df_left, font_size = 20) +
-  labs(title = expression(atop("Moderate Effect Size",
+  labs(title = expression(atop("Moderate Effect Sizes",
                                x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)")))
 
 # 3. Filter data for the RIGHT plot
 df_right <- res_cor %>%
-  filter(dist_x1_x2    == "normal5_normal5",
-         beta_scenario == "strong")
+  filter(dist_x1_x2    == "normal1_normal1",
+         beta_scenario == "extreme")
 
 # 4. Create the RIGHT plot and add the plotmath title
 p_right <- plot_cor(df_right, font_size = 20) +
-  labs(title = expression(atop("Strong Effect Size",
-                               x[1] ~ " ~ N(0,5) & " ~ x[2] ~ " ~ N(0,5)"))) +
+  labs(title = expression(atop("Very Strong Effect Sizes",
+                               x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))) +
   # Remove y-axis title, text, and ticks from the right plot
   theme(
     axis.title.y = element_blank(),
@@ -590,18 +579,20 @@ df_left <- res_msm %>%
          beta_scenario == "moderate")
 
 df_right <- res_msm %>%
-  filter(dist_x1_x2    == "normal5_normal5",
+  filter(dist_x1_x2    == "normal1_normal1",
          beta_scenario == "strong")
 
 p_list_left <- plot_coefs(df_left, font_size = 20)
 p_list_right <- plot_coefs(df_right, font_size = 20)
 
+ggsave("test.png", p_list_left[[1]], width = 8, height = 8, dpi = 300)
+
 # 2. Add overall titles as separate "plots"
-title_left_text <- expression(atop("Moderate Effect Size", x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)"))
+title_left_text <- expression(atop("Moderate Effect Sizes", x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)"))
 title_left <- ggplot() + labs(title = title_left_text) + theme_void() +
               theme(plot.title = element_text(hjust = 0.5, size = 22))
 
-title_right_text <- expression(atop("Strong Effect Size", x[1] ~ " ~ N(0,5) & " ~ x[2] ~ " ~ N(0,5)"))
+title_right_text <- expression(atop("Very Strong Effect Sizes", x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))
 title_right <- ggplot() + labs(title = title_right_text) + theme_void() +
                theme(plot.title = element_text(hjust = 0.5, size = 22))
 
@@ -644,7 +635,45 @@ dev.off()
 
 dir_tables <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/tables/ieb/"
 
+## effect sizes ----
+
+# UPDATE HERE!!!
+betas <- list(
+  moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -3.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.2, beta_1_03 = 0.1,
+               beta_1_12 = 0.2, beta_1_13 = 0.1,
+               beta_2_01 = 0.2, beta_2_03 = 0.0,
+               beta_2_12 = 0.2, beta_2_13 = 0.0),
+  strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -3.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.4, beta_1_03 = 0.0,
+               beta_1_12 = 0.4, beta_1_13 = 0.0,
+               beta_2_01 = 0.4, beta_2_03 = 0.0,
+               beta_2_12 = 0.4, beta_2_13 = 0.0),
+  extreme  = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_0_12 = -4.4, beta_0_13 = -3.4,
+               beta_1_01 = 0.6, beta_1_03 = 0.0,
+               beta_1_12 = 0.6, beta_1_13 = 0.0,
+               beta_2_01 = 0.6, beta_2_03 = 0.0,
+               beta_2_12 = 0.6, beta_2_13 = 0.0)
+)
+
+latex_effect_sizes <- convert_to_latex_effect_sizes(betas)
+writeLines(latex_effect_sizes, file.path(dir_tables, "ieb-effect-sizes.tex"))
+
 ## correlation ----
+cor_summary <- res_cor %>%
+  group_by(problem, dist_x1_x2, beta_scenario, from) %>%
+  summarise(
+    rho_mean = mean(rho),
+    rho_ci = list(round(quantile(rho, probs = c(0.025, 0.975)), 4))
+    ) %>%
+    mutate(
+      rho_lower = map_dbl(rho_ci, ~ .[1]),
+      rho_upper = map_dbl(rho_ci, ~ .[2]),
+      rho_ci = map_chr(rho_ci, ~ paste0("(", .[1], ", ", .[2], ")")))
+
 processed_df_cor <- process_correlation_summary(cor_summary)
 latex_cor <- convert_to_latex_cor(processed_df_cor, colsep = "2pt")
 writeLines(latex_cor, file.path(dir_tables, "ieb_cor.tex"))

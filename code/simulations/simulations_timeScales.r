@@ -7,8 +7,8 @@ library(patchwork)
 # setup ----
 
 setwd("nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd")
-source("code/ukb/helpers_sim.r")
-source("code/ukb/helpers_timeScales.r")
+source("code/simulations/helpers_sim.r")
+source("code/simulations/helpers_timeScales.r")
 
 registry <- "results/simulations/registries/sim-timeScales-registry"
 dir_datasets <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/datasets/"
@@ -220,9 +220,9 @@ formula_mod_stratified_bh <- ped_status ~
 #   data = sim_statics$timeScales_bh, job = NULL, instance = instance, formula = formula_mod_timeScales_bh, bs_0 = "ps", bs = "ps", k = k, ci = TRUE)
 
 # experiment ----
-if (test_directory_exists(registry)) {
-  unlink(registry, recursive = TRUE)
-}
+# if (test_directory_exists(registry)) {
+#   unlink(registry, recursive = TRUE)
+# }
 if (!test_directory_exists(registry)) {
   reg <- makeExperimentRegistry(
     registry,
@@ -496,6 +496,9 @@ linePlots <- expand_grid(trans = line_trans, scale = scales) |>
   }) |>
   flatten()
 
+saveRDS(linePlots, paste0(dir_datasets, "sim-timeScales-results-linePlots_bh.rds"))
+linePlots <- readRDS(file.path(dir_datasets, "sim-timeScales-results-linePlots_bh.rds"))
+
 num_cores <- min(length(linePlots), parallel::detectCores())
 registerDoParallel(cores = num_cores)
 start_time <- Sys.time()
@@ -549,8 +552,8 @@ pick <- function(lst, name) {
   p
 }
 
-plots_01_list <- lapply(plots_01, function(x) pick(linePlots, x))
-plots_03_list <- lapply(plots_03, function(x) pick(linePlots, x))
+plots_01_list <- setNames(lapply(plots_01, function(x) pick(linePlots, x)), plots_01)
+plots_03_list <- setNames(lapply(plots_03, function(x) pick(linePlots, x)), plots_03)
 
 # All of your plot creation and modification code is correct and remains unchanged.
 p01_tl <- plots_01_list[[which(str_detect(names(plots_01_list), "sim_stratified") & str_detect(names(plots_01_list), "algo_stratified"))]]
@@ -563,8 +566,8 @@ p03_tr <- plots_03_list[[which(str_detect(names(plots_03_list), "sim_timeScales"
 p03_bl <- plots_03_list[[which(str_detect(names(plots_03_list), "sim_stratified") & str_detect(names(plots_03_list), "algo_timeScales"))]]
 p03_br <- plots_03_list[[which(str_detect(names(plots_03_list), "sim_timeScales") & str_detect(names(plots_03_list), "algo_timeScales"))]]
 
-col_title_1 <- ggplot() + labs(title = "SSTS DGP") + theme_void() + theme(plot.title = element_text(hjust = 0.5, face = "bold", size = font_size))
-col_title_2 <- ggplot() + labs(title = "MTS DGP") + theme_void() + theme(plot.title = element_text(hjust = 0.5, face = "bold", size = font_size))
+col_title_1 <- ggplot() + labs(title = "SSTS DGP") + theme_void() + theme(plot.title = element_text(hjust = 0.5, face = "plain", size = font_size))
+col_title_2 <- ggplot() + labs(title = "MTS DGP") + theme_void() + theme(plot.title = element_text(hjust = 0.5, face = "plain", size = font_size))
 
 theme_update_font <- theme(axis.text = element_text(size = font_size), axis.title = element_text(size = font_size))
 
@@ -578,11 +581,15 @@ left_plots <- list(p01_tl, p01_bl, p03_tl, p03_bl); new_labels <- c("Log-hazard\
 grid_01 <- (p01_tl + p01_tr) / (p01_bl + p01_br)
 grid_03 <- (p03_tl + p03_tr) / (p03_bl + p03_br)
 
-title_top <- ggplot() + labs(title = "Transition 0->1") + theme_void() +
-             theme(plot.title = element_text(size = 22, face = "bold", hjust = 0.5))
+title_top <- ggplot() +
+  labs(title = expression(bold("Transition 0" * "\u2192" * "1"))) +
+  theme_void() +
+  theme(plot.title = element_text(size = 22, hjust = 0.5))
 
-title_bottom <- ggplot() + labs(title = "Transition 0->3") + theme_void() +
-                theme(plot.title = element_text(size = 22, face = "bold", hjust = 0.5))
+title_bottom <- ggplot() +
+  labs(title = expression(bold("Transition 0" * "\u2192" * "3"))) +
+  theme_void() +
+  theme(plot.title = element_text(size = 22, hjust = 0.5))
 
 col_titles <- col_title_1 + col_title_2
 
@@ -662,7 +669,7 @@ end_time <- Sys.time()
 print(paste("Total time for line plots (in minutes):", as.numeric(difftime(end_time, start_time, units = "mins"))))
 stopImplicitCluster()
 
-## fixed effect coverage plots ----
+## fixed effect boxplots ----
 
 algo_levels  <- c("algo_timeScales", "algo_stratified")   # left → right
 bs_levels    <- c("ps", "fs")                             # within each algo
@@ -828,17 +835,10 @@ latex_coverage_bh <- generate_coverage_latex_bh(summary_coverage_bh)
 writeLines(latex_coverage_bh, file.path(dir_tables, "bh-coverage.tex"))
 
 ## fe coverage table ----
-res_fe_processed <- res_fe %>%
-  mutate(
-    model_name = sub("_[^_]+$", "", model),
-    bs_type = sub(".*_", "", model)
-  )
-
-# Use the new function to create the summary
 coverage_summary_fe <- create_coverage_summary_fe(
-  res_fe_processed,
+  res_fe,
   grouping_vars = c("model_name", "bs_type")
 )
 
 latex_coverage_fe <- generate_coverage_latex_fe(coverage_summary_fe)
-writeLines(latex_coverage_fe, file.path(dir_tables, "fe-coverage.tex"))
+writeLines(latex_coverage_fe, file.path(dir_tables, "ts-fe-coverage.tex"))

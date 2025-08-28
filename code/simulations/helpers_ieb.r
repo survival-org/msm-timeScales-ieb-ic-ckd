@@ -13,8 +13,6 @@ library(ggplot2)
 library(scales)
 library(patchwork)
 
-source("/nvmetmp/wis37138/msm_kidneyFunction/code/helpers_sim.r")
-
 # data prep ----
 
 wrapper_sim <- function(
@@ -443,21 +441,20 @@ plot_coefs <- function(df, var_name = "coefficient", drop_int = TRUE, font_size 
     df_sub <- df2 %>% filter(transition == tran)
     df_hlines_sub <- df_hlines %>% filter(transition == tran)
 
-    # FIX #1: Check for the correct, capitalized names
     if (tran %in% c("Onset", "Progression")) {
-      ylims <- c(-0.25, 0.85)
-      ybreaks <- seq(-0.2, 0.8, by = 0.2)
+      ylims <- c(-0.1, 0.7)
+      ybreaks <- seq(0.0, 0.6, by = 0.2)
 
       if(tran == "Onset") {
-        xlab <- ",0,1"
+        xlab <- ",0→1"
       } else if(tran == "Progression") {
-        xlab <- ",1,2"
+        xlab <- ",1→2"
       }
 
     } else if (tran == "Progression Interaction") {
       ylims <- c(-0.51, 0.40)
       ybreaks <- seq(-0.50, 0.40, by = 0.1)
-      xlab <- ",1,2 (int)"
+      xlab <- ",1→2 (int)"
     } else {
       ylims <- NULL; ybreaks <- waiver(); xlab <- NULL
     }
@@ -562,13 +559,13 @@ process_correlation_summary <- function(data) {
     separate(dist_x1_x2, into = c("dist_x1", "dist_x2"), sep = "_", remove = FALSE) %>%
     mutate(
       dist_x1 = case_when(
-        dist_x1 == "bernoulli0.5" ~ "Bernoulli(0.5)",
+        dist_x1 == "bernoulli0.5" ~ "Ber(0.5)",
         dist_x1 == "normal1" ~ "N(0,1)",
         dist_x1 == "normal5" ~ "N(0,5)",
         TRUE ~ as.character(dist_x1)
       ),
       dist_x2 = case_when(
-        dist_x2 == "bernoulli0.5" ~ "Bernoulli(0.5)",
+        dist_x2 == "bernoulli0.5" ~ "Ber(0.5)",
         dist_x2 == "normal1" ~ "N(0,1)",
         dist_x2 == "normal5" ~ "N(0,5)",
         TRUE ~ as.character(dist_x2)
@@ -576,24 +573,107 @@ process_correlation_summary <- function(data) {
     )
 }
 
-convert_to_latex_cor <- function(data, round_digits = 2, caption = "\\captioniebcor", label = "tab:sim-ieb-cor", colsep = "3pt") {
+
+convert_to_latex_effect_sizes <- function(betas) {
+  latex_table <- "\\begin{table}[htbp]\n"
+  latex_table <- paste0(latex_table, "\\centering\n")
+  latex_table <- paste0(latex_table, "\\caption{\\captioniebeffectsizes}\n")
+  latex_table <- paste0(latex_table, "\\label{tab:sim-ieb-effect-sizes}\n")
+
+  col_defs <- "{p{0.38\\textwidth} >{\\centering\\arraybackslash}p{0.14\\textwidth} >{\\centering\\arraybackslash}p{0.14\\textwidth} >{\\centering\\arraybackslash}p{0.14\\textwidth}}"
+  latex_table <- paste0(latex_table, "\\begin{tabular}", col_defs, "\n")
+  latex_table <- paste0(latex_table, "\\toprule\n")
+
+  latex_table <- paste0(latex_table, "\\multicolumn{1}{c}{} & \\multicolumn{3}{c}{Effect Sizes} \\\\\n")
+  latex_table <- paste0(latex_table, "\\cmidrule(lr){2-4}\n")
+
+  latex_table <- paste0(latex_table, "\\multicolumn{1}{l}{Coefficient} & \\multicolumn{1}{c}{Moderate} & \\multicolumn{1}{c}{Strong} & \\multicolumn{1}{c}{Very Strong} \\\\\n")
+  latex_table <- paste0(latex_table, "\\midrule\n")
+
+  format_beta_name <- function(name) {
+    name <- gsub("beta_0_01", "$\\\\beta_{x_0,0\\\\rightarrow 1}$", name)
+    name <- gsub("beta_0_03", "$\\\\beta_{x_0,0\\\\rightarrow 3}$", name)
+    name <- gsub("beta_0_12", "$\\\\beta_{x_0,1\\\\rightarrow 2}$", name)
+    name <- gsub("beta_0_13", "$\\\\beta_{x_0,1\\\\rightarrow 3}$", name)
+
+    name <- gsub("beta_1_01", "$\\\\beta_{x_1,0\\\\rightarrow 1}$", name)
+    name <- gsub("beta_1_03", "$\\\\beta_{x_1,0\\\\rightarrow 3}$", name)
+    name <- gsub("beta_1_12", "$\\\\beta_{x_1,1\\\\rightarrow 2}$", name)
+    name <- gsub("beta_1_13", "$\\\\beta_{x_1,1\\\\rightarrow 3}$", name)
+
+    name <- gsub("beta_2_01", "$\\\\beta_{x_2,0\\\\rightarrow 1}$", name)
+    name <- gsub("beta_2_03", "$\\\\beta_{x_2,0\\\\rightarrow 3}$", name)
+    name <- gsub("beta_2_12", "$\\\\beta_{x_2,1\\\\rightarrow 2}$", name)
+    name <- gsub("beta_2_13", "$\\\\beta_{x_2,1\\\\rightarrow 3}$", name)
+    return(name)
+  }
+
+  latex_table <- paste0(latex_table, "\\multicolumn{4}{l}{\\textbf{Transition-specific intercepts}} \\\\\n")
+  for (i in 1:4) {
+    beta_name <- names(betas$moderate)[i]
+    formatted_name <- format_beta_name(beta_name)
+
+    val_moderate <- sprintf("%.1f", betas$moderate[beta_name])
+    val_strong   <- sprintf("%.1f", betas$strong[beta_name])
+    val_extreme  <- sprintf("%.1f", betas$extreme[beta_name])
+
+    latex_table <- paste0(latex_table, formatted_name, " & ", val_moderate, " & ", val_strong, " & ", val_extreme, " \\\\\n")
+  }
+
+  latex_table <- paste0(latex_table, "\\midrule\n")
+
+  latex_table <- paste0(latex_table, "\\multicolumn{4}{l}{\\textbf{Transition-specific effect sizes of risk factor }$x_1$} \\\\\n")
+  for (i in 5:8) {
+    beta_name <- names(betas$moderate)[i]
+    formatted_name <- format_beta_name(beta_name)
+
+    val_moderate <- sprintf("%.1f", betas$moderate[beta_name])
+    val_strong   <- sprintf("%.1f", betas$strong[beta_name])
+    val_extreme  <- sprintf("%.1f", betas$extreme[beta_name])
+
+    latex_table <- paste0(latex_table, formatted_name, " & ", val_moderate, " & ", val_strong, " & ", val_extreme, " \\\\\n")
+  }
+
+  latex_table <- paste0(latex_table, "\\midrule\n")
+
+  latex_table <- paste0(latex_table, "\\multicolumn{4}{l}{\\textbf{Transition-specific effect sizes of risk factor }$x_2$} \\\\\n")
+  for (i in 9:12) {
+    beta_name <- names(betas$moderate)[i]
+    formatted_name <- format_beta_name(beta_name)
+
+    val_moderate <- sprintf("%.1f", betas$moderate[beta_name])
+    val_strong   <- sprintf("%.1f", betas$strong[beta_name])
+    val_extreme  <- sprintf("%.1f", betas$extreme[beta_name])
+
+    latex_table <- paste0(latex_table, formatted_name, " & ", val_moderate, " & ", val_strong, " & ", val_extreme, " \\\\\n")
+  }
+
+  latex_table <- paste0(latex_table, "\\bottomrule\n")
+  latex_table <- paste0(latex_table, "\\end{tabular}\n")
+  latex_table <- paste0(latex_table, "\\end{table}\n")
+
+  return(latex_table)
+}
+
+
+convert_to_latex_cor <- function(data, round_digits = 2, caption = "\\captioniebcor", label = "tab:sim-ieb-cor", colsep = "2pt") {
 
   wide_data <- data %>%
     dplyr::mutate(
-      dist_x1 = factor(dist_x1, levels = c("Bernoulli(0.5)", "N(0,1)", "N(0,5)")),
-      dist_x2 = factor(dist_x2, levels = c("Bernoulli(0.5)", "N(0,1)", "N(0,5)"))
+      dist_x1 = factor(dist_x1, levels = c("Ber(0.5)", "N(0,1)", "N(0,5)")),
+      dist_x2 = factor(dist_x2, levels = c("Ber(0.5)", "N(0,1)", "N(0,5)"))
     ) %>%
-    dplyr::arrange(dist_x1, dist_x2) %>%
+    dplyr::arrange(dist_x1, dist_x2, beta_scenario) %>%
     dplyr::mutate(dplyr::across(c(rho_mean, rho_lower, rho_upper), ~ round(.x, round_digits))) %>%
     dplyr::mutate(cell_content = sprintf("\\makecell{%.*f \\\\ (%.*f; %.*f)}",
                                          round_digits, rho_mean,
                                          round_digits, rho_lower,
                                          round_digits, rho_upper)) %>%
     tidyr::unite(col_name, problem, from) %>%
-    dplyr::select(dist_x1, dist_x2, col_name, cell_content) %>%
+    dplyr::select(dist_x1, dist_x2, beta_scenario, col_name, cell_content) %>%
     tidyr::pivot_wider(names_from = col_name, values_from = cell_content, values_fill = "-")
 
-  col_order <- c("dist_x1", "dist_x2",
+  col_order <- c("dist_x1", "dist_x2", "beta_scenario",
                  "sim_stratified_0", "sim_stratified_1",
                  "sim_timeScales_0", "sim_timeScales_1")
 
@@ -606,38 +686,40 @@ convert_to_latex_cor <- function(data, round_digits = 2, caption = "\\captionieb
   wide_data <- wide_data[, col_order]
 
   format_dist_name <- function(name) {
-      name <- stringr::str_replace_all(name, c("Bernoulli" = "\\\\text{Bernoulli}", "N" = "N"))
+      name <- stringr::str_replace_all(name, c("Bernoulli" = "\\\\text{Bernoulli}", "N" = "N", "Ber" = "\\\\text{Ber}"))
       sprintf("\\(%s\\)", name)
   }
 
   body_rows <- apply(wide_data, 1, function(row) {
     dist1 <- format_dist_name(row["dist_x1"])
     dist2 <- format_dist_name(row["dist_x2"])
-    paste(c(dist1, dist2, row[3:6]), collapse = " & ")
+    beta_s <- row["beta_scenario"]
+    paste(c(dist1, dist2, beta_s, row[4:7]), collapse = " & ")
   })
 
   body <- paste(body_rows, collapse = " \\\\\n")
 
-  # Assemble the final LaTeX string, now including the \setlength command
+  # Assemble the final LaTeX string with explicit line breaks and corrected header
   final_latex_code <- paste(
-    "\\begin{table}[ht!]",
-    "\\centering",
-    # ADDED LINE: Set the column separation to a smaller value
-    paste0("\\setlength{\\tabcolsep}{", colsep, "}"),
-    paste0("\\caption{", caption, "}"),
-    paste0("\\label{", label, "}"),
-    "\\begin{tabular}{llcccc}",
-    "\\toprule",
-    " & & \\multicolumn{2}{c}{\\textbf{STSS DGP}} & \\multicolumn{2}{c}{\\textbf{MTS DGP}} \\\\",
-    "\\cmidrule(lr){3-4} \\cmidrule(lr){5-6}",
-    "\\textbf{Dist. \\(x_1\\)} & \\textbf{Dist. \\(x_2\\)} & \\textbf{State 0} & \\textbf{State 1} & \\textbf{State 0} & \\textbf{State 1} \\\\",
-    "\\midrule",
+    "\\begin{table}[ht!]\n",
+    "\\centering\n",
+    paste0("\\setlength{\\tabcolsep}{", colsep, "}\n"),
+    paste0("\\caption{", caption, "}\n"),
+    paste0("\\label{", label, "}\n"),
+    "\\footnotesize\n",
+    "\\begin{tabular}{llclcccc}\n",
+    "\\toprule\n",
+    " & & \\textbf{Effect} & \\multicolumn{2}{c}{\\textbf{STSS DGP}} & \\multicolumn{2}{c}{\\textbf{MTS DGP}} \\\\\n", # "Effect" on its own line
+    "\\cmidrule(lr){4-5} \\cmidrule(lr){6-7}\n",
+    "\\textbf{Dist. \\(x_1\\)} & \\textbf{Dist. \\(x_2\\)} & \\textbf{Sizes} & \\textbf{State 0} & \\textbf{State 1} & \\textbf{State 0} & \\textbf{State 1} \\\\\n", # "Sizes" aligned with Dist. x1 and x2
+    "\\midrule\n",
     body,
-    "\\\\",
-    "\\bottomrule",
-    "\\end{tabular}",
+    "\\\\\n",
+    "\\bottomrule\n",
+    "\\normalsize\n",
+    "\\end{tabular}\n",
     "\\end{table}",
-    collapse = "\n"
+    collapse = ""
   )
 
   return(invisible(final_latex_code))

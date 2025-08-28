@@ -7,7 +7,6 @@ library(stringr)
 library(mvtnorm)
 library(rlang)
 library(survival)
-# library(icenReg)
 library(mgcv)
 library(pammtools)
 library(flexsurv)
@@ -741,7 +740,7 @@ wrapper_weibull <- function(
 
   ic_point <- match.arg(ic_point)
   fct <- match.arg(fct)
-saveRDS(instance, file = "instance2.rds")
+
   df <- instance[[1]]
   formula <- instance[[2]]
 
@@ -1515,7 +1514,7 @@ plot_coverage_bh <- function(data,
         breaks = seq(0, 1, 0.2),
         labels = scales::percent_format(accuracy = 1)
       ) +
-      labs(title = NULL, x = NULL, y = "Coverage", colour = "Estimation Time Point") +
+      labs(title = NULL, x = NULL, y = "Coverage", colour = "Estimation Point") +
       theme_bw() +
       theme(
         # axis.text.x  = element_text(size = font_size),

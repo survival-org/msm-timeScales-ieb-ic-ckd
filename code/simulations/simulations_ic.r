@@ -6,8 +6,8 @@ library(doParallel)
 # setup ----
 
 setwd("nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd")
-source("code/ukb/helpers_sim.r")
-source("code/ukb/helpers_ic.r")
+source("code/simulations/helpers_sim.r")
+source("code/simulations/helpers_ic.r")
 
 analysis_name <- "bh"
 registry <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
@@ -72,9 +72,9 @@ mean(a$loghazard_cov)
 instance <- readRDS("instance2.rds")
 
 # run ----
-if (test_directory_exists(registry)) {
-  unlink(registry, recursive = TRUE)
-}
+# if (test_directory_exists(registry)) {
+#   unlink(registry, recursive = TRUE)
+# }
 if (!test_directory_exists(registry)) {
   reg <- makeExperimentRegistry(
     registry,
@@ -372,6 +372,13 @@ for(scale in scales) {
 ### coverage barplots (facet wrap) ----
 library(patchwork)
 
+# Columns (DGPs):
+col1 <- "sim_pexp";    col1_title <- "Piecewise Exponential DGP"
+col2 <- "sim_weibull"; col2_title <- "Weibull DGP"
+
+# Rows (IC mechanisms):
+rows <- c("beta", "uniform", "equidistant")
+
 for(scale in scales) {
 
 # 1) build the per-group plots for ONE scale
@@ -415,17 +422,17 @@ tweak <- function(p, show_x = TRUE, show_legend = FALSE, title = NULL,
 
 # assemble (only calls changed: hide_y_text = TRUE on right column; titles already set)
 p11 <- tweak(pick(plots, col1, rows[1]), show_x = FALSE, show_legend = FALSE,
-             title = col1_title, y_label = paste0("Coverage (", rows[1], ")"))
+             title = col1_title, y_label = paste0("Coverage\n(", rows[1], ")"))
 p12 <- tweak(pick(plots, col2, rows[1]), show_x = FALSE, show_legend = FALSE,
              title = col2_title, hide_y_text = TRUE)
 
 p21 <- tweak(pick(plots, col1, rows[2]), show_x = FALSE, show_legend = FALSE,
-             y_label = paste0("Coverage (", rows[2], ")"))
+             y_label = paste0("Coverage\n(", rows[2], ")"))
 p22 <- tweak(pick(plots, col2, rows[2]), show_x = FALSE, show_legend = FALSE,
              hide_y_text = TRUE)
 
 p31 <- tweak(pick(plots, col1, rows[3]), show_x = TRUE,  show_legend = FALSE,
-             y_label = paste0("Coverage (", rows[3], ")"))
+             y_label = paste0("Coverage\n(", rows[3], ")"))
 p31 <- p31 + theme(axis.title.y = element_text(hjust = +0.8))
 p32 <- tweak(pick(plots, col2, rows[3]), show_x = TRUE,  show_legend = TRUE,
              hide_y_text = TRUE)
@@ -444,8 +451,15 @@ final_fig <-
   )
 
 # 6) save
+scale_name <- switch(
+  scale,
+  loghazard = "loghazard",
+  hazard = "hazard",
+  cumulativehazard = "cumu",
+  survivalfunction = "surv"
+)
 ggsave(file.path(dir_figures_bh, "coverages",
-                 paste0("coverage_grid_", scale, ".png")),
+                 paste0("ic_bh_cov_", scale_name, ".png")),
        final_fig, width = 12, height = 12, dpi = 300)
 
 }

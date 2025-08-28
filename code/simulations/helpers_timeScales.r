@@ -691,6 +691,13 @@ create_fe_table <- function(df, grouping_vars = character()) {
 
 
 create_coverage_summary_fe <- function(df, grouping_vars = character()) {
+
+  df <- df %>%
+    mutate(
+      model_name = sub("_[^_]+$", "", model),
+      bs_type = sub(".*_", "", model)
+    )
+
   # 0) Validate grouping_vars is a character vector
   if (!is.character(grouping_vars)) {
     stop("`grouping_vars` must be a character vector")
@@ -1097,99 +1104,101 @@ create_bh_slicePlots <- function(
 # }
 
 plot_fixedEffects_boxplots <- function(res_fe, algo_levels = c("algo_timeScales","algo_stratified"),
-                                      bs_levels = c("ps","fs"), font_size = 14) {
+                    bs_levels = c("ps","fs"), font_size = 14) {
 
   # Helper function to create facet labels as plotmath strings
   parse_facet_label <- function(var_string) {
-    # Splits "beta_1_01" into "1" and "01"
-    parts <- str_split(var_string, "_", simplify = TRUE)
-    x_sub <- parts[2]
-    last_part <- parts[3]
-    # Splits "01" into "0" and "1"
-    other_subs <- paste(str_split(last_part, "", simplify = TRUE), collapse = ",")
+  # Splits "beta_1_01" into "1" and "01"
+  parts <- str_split(var_string, "_", simplify = TRUE)
+  x_sub <- parts[2]
+  last_part <- parts[3]
+  # Splits "01" into "0" and "1"
+  state_parts <- str_split(last_part, "", simplify = TRUE)
+  # Creates rightarrow between states
+  other_subs <- paste(state_parts, collapse = " %->% ")
 
-    # Creates a string that label_parsed can understand.
-    # The list() function groups the subscripts correctly.
-    paste0("beta[list(x[", x_sub, "],", other_subs, ")]")
+  # Creates a string that label_parsed can understand.
+  # The list() function groups the subscripts correctly.
+  paste0("beta[x[", x_sub, "] * ',' * ", other_subs, "]")
   }
 
   df <- res_fe %>%
-    mutate(
-      problem_label = recode(problem,
-                             "sim_stratified_fe" = "SSTS DGP",
-                             "sim_timeScales_fe" = "MTS DGP"),
-      model = sub("_[^_]+$", "", model),
-      algo  = factor(model, levels = algo_levels),
-      bs    = factor(bs,    levels = bs_levels),
-      bs_label = recode(bs, ps = "Penalized Splines", fs = "Factor Smooth"),
-      algo_label = recode(as.character(algo),
-                          "algo_timeScales" = "MTS PAM",
-                          "algo_stratified" = "SSTS PAM"),
+  mutate(
+    problem_label = recode(problem,
+               "sim_stratified_fe" = "SSTS DGP",
+               "sim_timeScales_fe" = "MTS DGP"),
+    model = sub("_[^_]+$", "", model),
+    algo  = factor(model, levels = algo_levels),
+    bs    = factor(bs,    levels = bs_levels),
+    bs_label = recode(bs, ps = "Penalized Splines", fs = "Factor Smooth"),
+    algo_label = recode(as.character(algo),
+              "algo_timeScales" = "MTS PAM",
+              "algo_stratified" = "SSTS PAM"),
 
-      x_label = factor(
-        paste0(problem_label, " &\n", algo_label),
-        levels = c(
-          "SSTS DGP &\nSSTS PAM",
-          "SSTS DGP &\nMTS PAM",
-          "MTS DGP &\nSSTS PAM",
-          "MTS DGP &\nMTS PAM"
-        )
-      ),
-
-      # --- THIS IS THE CORRECTED FACET LABEL CREATION ---
-      # Use map_chr to apply the function to each element of 'variable'
-      facet_label = purrr::map_chr(variable, parse_facet_label)
+    x_label = factor(
+    paste0(problem_label, " &\n", algo_label),
+    levels = c(
+      "SSTS DGP &\nSSTS PAM",
+      "SSTS DGP &\nMTS PAM",
+      "MTS DGP &\nSSTS PAM",
+      "MTS DGP &\nMTS PAM"
     )
+    ),
+
+    # --- THIS IS THE CORRECTED FACET LABEL CREATION ---
+    # Use map_chr to apply the function to each element of 'variable'
+    facet_label = purrr::map_chr(variable, parse_facet_label)
+  )
 
   # truth_df needs the new facet_label to map correctly
   truth_df <- df %>%
-    distinct(facet_label, true_value) %>%
-    rename(true_val = true_value)
+  distinct(facet_label, true_value) %>%
+  rename(true_val = true_value)
 
   # Ensure the facet labels in the plot are ordered correctly based on the original variable
   df$facet_label <- factor(df$facet_label, levels = unique(df$facet_label[order(df$variable)]))
 
   ggplot(df,
-         aes(x = x_label, y = estimate,
-             fill = bs_label,
-             color = algo_label
-             )) +
-    geom_boxplot(outlier.shape = NA,
-                 position = position_dodge(width = 0.85),
-                 linewidth = 0.6) +
-    geom_hline(data = truth_df,
-               aes(yintercept = true_val),
-               colour = "darkorange", linewidth = 1.1) +
+     aes(x = x_label, y = estimate,
+       fill = bs_label,
+       color = algo_label
+       )) +
+  geom_boxplot(outlier.shape = NA,
+         position = position_dodge(width = 0.85),
+         linewidth = 0.6) +
+  geom_hline(data = truth_df,
+         aes(yintercept = true_val),
+         colour = "darkorange", linewidth = 1.1) +
 
-    scale_fill_manual(
-      name = "Smooth Type",
-      values = c("Penalized Splines" = "#66C2A5", "Factor Smooth" = "#FC8D62")
-    ) +
-    scale_color_manual(
-      name = "Algorithm",
-      values = c("SSTS PAM" = "#A6A6A6", "MTS PAM" = "#4F4F4F"),
-      breaks = c("SSTS PAM", "MTS PAM")
-    ) +
+  scale_fill_manual(
+    name = "Smooth Type",
+    values = c("Penalized Splines" = "#66C2A5", "Factor Smooth" = "#FC8D62")
+  ) +
+  scale_color_manual(
+    name = "Algorithm",
+    values = c("SSTS PAM" = "#A6A6A6", "MTS PAM" = "#4F4F4F"),
+    breaks = c("SSTS PAM", "MTS PAM")
+  ) +
 
-    # --- USE THE NEW FACET LABEL WITH label_parsed ---
-    facet_wrap(~ facet_label, ncol = 2, labeller = label_parsed) +
-    labs(x = NULL, y = "Estimate") +
-    guides(
-      fill = guide_legend(title.position="top", title.hjust = 0.5),
-      color = guide_legend(title.position="top", title.hjust = 0.5)
-    ) +
-    theme_bw(base_size = font_size) +
-    theme(
-      axis.text.x      = element_text(hjust = 0.5),
-      panel.spacing    = unit(1.2, "lines"),
-      plot.title       = element_blank(),
-      strip.background = element_rect(fill = "gray92", color = "gray92"),
-      strip.text       = element_text(size = 14, margin = margin(t = 5, b = 5)),
-      legend.position  = "bottom",
-      legend.box       = "horizontal",
-      legend.title     = element_text(size = 11, face = "bold"),
-      legend.margin    = margin(t = 10, b = 0)
-    )
+  # --- USE THE NEW FACET LABEL WITH label_parsed ---
+  facet_wrap(~ facet_label, ncol = 2, labeller = label_parsed) +
+  labs(x = NULL, y = "Effect Size Estimate") +
+  guides(
+    fill = guide_legend(title.position="top", title.hjust = 0.5),
+    color = guide_legend(title.position="top", title.hjust = 0.5)
+  ) +
+  theme_bw(base_size = font_size) +
+  theme(
+    axis.text.x      = element_text(hjust = 0.5),
+    panel.spacing    = unit(1.2, "lines"),
+    plot.title       = element_blank(),
+    strip.background = element_rect(fill = "gray92", color = "gray92"),
+    strip.text       = element_text(size = 14, margin = margin(t = 5, b = 5)),
+    legend.position  = "bottom",
+    legend.box       = "horizontal",
+    legend.title     = element_text(size = 11, face = "bold"),
+    legend.margin    = margin(t = 10, b = 0)
+  )
 }
 
 
@@ -1519,7 +1528,6 @@ generate_coverage_latex_bh <- function(summary_df) {
 
 generate_coverage_latex_fe <- function(summary_df, rounding_digits = 2) {
 
-  # --- Step 1: Internal Data Preparation and Pivoting ---
   summary_formatted <- summary_df %>%
     mutate(
       dgp_label = recode(problem,
@@ -1535,12 +1543,10 @@ generate_coverage_latex_fe <- function(summary_df, rounding_digits = 2) {
                            coverage, coverage_lower, coverage_upper)
     )
 
-  # Define the order for the final columns
   dgp_order <- c("SSTS DGP", "MTS DGP")
   model_order <- c("SSTS PAM", "MTS PAM")
   smoother_order <- c("Penalized Splines", "Factor Smooth")
 
-  # Create all possible column names in the correct final order
   final_col_order <- expand_grid(dgp = dgp_order, model = model_order, smoother = smoother_order) %>%
     unite("col_name", dgp, model, smoother, sep = "_") %>%
     pull(col_name)
@@ -1554,16 +1560,12 @@ generate_coverage_latex_fe <- function(summary_df, rounding_digits = 2) {
     ) %>%
     rename("Transition" = variable) %>%
     mutate(Transition = str_replace_all(Transition,
-      c("beta_1_01" = "$\\\\beta_{x_1,0,1}$",
-        "beta_1_03" = "$\\\\beta_{x_1,0,3}$",
-        "beta_1_12" = "$\\\\beta_{x_1,1,2}$",
-        "beta_1_13" = "$\\\\beta_{x_1,1,3}$")
+      c("beta_1_01" = "$\\\\beta_{x_1,0\\\\rightarrow 1}$",
+        "beta_1_03" = "$\\\\beta_{x_1,0\\\\rightarrow 3}$",
+        "beta_1_12" = "$\\\\beta_{x_1,1\\\\rightarrow 2}$",
+        "beta_1_13" = "$\\\\beta_{x_1,1\\\\rightarrow 3}$")
     )) %>%
-    # Use the ordered vector to select and arrange columns
     select(any_of(c("Transition", final_col_order)))
-
-
-  # --- Step 2: LaTeX Generation ---
 
   escape_latex <- function(text) {
     if (is.na(text)) return("")
@@ -1623,6 +1625,7 @@ generate_coverage_latex_fe <- function(summary_df, rounding_digits = 2) {
     "\\begin{table*}[htbp]", "\\centering", "\\caption{\\captionfecoverage}",
     "\\label{tab:sim-ts-fe-coverage}",
     "\\begin{sideways}",
+    "\\footnotesize",
     "\\setlength{\\tabcolsep}{3pt}",
     tabular_def, "\\toprule",
     dgp_header_line, paste(dgp_cmidrules, collapse = " "),
@@ -1648,7 +1651,7 @@ generate_coverage_latex_fe <- function(summary_df, rounding_digits = 2) {
     body_rows <- c(body_rows, paste0(full_row, " \\\\"))
   }
 
-  footer <- c("\\bottomrule", "\\end{tabular}", "\\end{sideways}", "\\end{table*}")
+  footer <- c("\\bottomrule", "\\end{tabular}", "\\normalsize", "\\end{sideways}", "\\end{table*}")
   full_latex_code <- paste(c(header, body_rows, footer), collapse = "\n")
   return(full_latex_code)
 }
