@@ -1,4 +1,4 @@
-suppressPackageStartupMessages(source("wis37138/msm-timeScales-ieb-ic-ckd/code/helpers_ukb.r"))
+suppressPackageStartupMessages(source("wis37138/msm-timeScales-ieb-ic-ckd/code/ukb/helpers_ukb.r"))
 
 # set up paths ----
 dir_pheno <- "/wis37138/_transfer/UKBB_level3/"
@@ -20,8 +20,8 @@ exclude_aki_6months <- TRUE
 exclude_nephrectomy_6months <- TRUE
 exclude_nonGPclinical <- TRUE
 death_info <- TRUE
-cutoffs <- c(90, 60, 30)
-# cutoffs <- c(60, 30, 15)
+# cutoffs <- c(90, 60, 30)
+cutoffs <- c(60, 30, 15)
 mid <- TRUE # default: TRUE
 imputation <- TRUE # default: TRUE
 rounding <- 0 # default: NULL
@@ -165,7 +165,7 @@ pheno <- pheno[, .SD[date_at_exam <= date_at_exam_death | is.na(date_at_exam_dea
 fwrite(pheno, file.path(dir_out, file_pheno_beforeFlags), sep = "\t", quote = FALSE)
 
 # apply flags ----
-pheno <- fread(file.path(dir_out, file_pheno_beforeFlags))
+# pheno <- fread(file.path(dir_out, file_pheno_beforeFlags))
 
 ## exclude assessments +- 6 months around AKI
 if(exclude_aki_6months) {
@@ -201,6 +201,7 @@ pheno <- add_vars(pheno)
 fwrite(pheno, file.path(dir_out, file_pheno_out), sep = "\t", quote = FALSE)
 
 # create event datasets ----
+file_pheno_out <- "pheno_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
 pheno <- fread(file.path(dir_out, file_pheno_out))
 
 adjust_ids <- pheno[need_adjustment == TRUE, unique(id)]
@@ -226,6 +227,8 @@ selected_cols <- c(
 
 events_raw <- create_events(pheno, snp_cols = snp_cols, selected_cols = selected_cols, adjust_ids = adjust_ids, age_eskd_dt = age_eskd_dt, death_info = death_info)
 saveRDS(events_raw, file.path(dir_out, gsub(".txt", "_beforePGS.rds", file_events_out)))
+file_events_out <- "events_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
+events_raw <- readRDS(file.path(dir_out, file_events_out))
 
 # add PGS ----
 weights_decline <- read.xlsx(file_coefs) %>%
@@ -301,17 +304,24 @@ events_raw <- events_raw[, ..cols_to_keep]
 saveRDS(events_raw, file.path(dir_out, gsub(".txt", ".rds", file_events_out)))
 
 ## adjustment for interval-censoring ----
-file_events_out <- "events_ukb_906030_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
+# file_events_out <- "events_ukb_906030_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
+file_events_out <- "events_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
 events_raw <- readRDS(file.path(dir_out, gsub(".txt", ".rds", file_events_out)))
 
 if(mid) {
     events <- adjust_events(events_raw, pheno)
     file_events_out <- gsub(".txt", "_mid.txt", file_events_out)
+} else {
+    events <- events_raw
+    file_events_out <- gsub(".txt", "_end.txt", file_events_out)
 }
 
 ## imputation (for jumps 0->2, 0->3, and 1->2)
 if(imputation) {
     events <- impute_events(events, pheno, cutoffs)
+    if(sum(events$transition %in% c("0->2", "0->3", "1->3")) > 0) {
+      events <- impute_events(events, pheno, cutoffs)
+    }
     file_events_out <- gsub(".txt", "_imputed.txt", file_events_out)
 }
 
@@ -341,8 +351,8 @@ if(!is.null(rounding)) {
 ## saving
 fwrite(events, file.path(dir_out, file_events_out), sep = "\t", quote = FALSE)
 saveRDS(events, file.path(dir_out, gsub(".txt", ".rds", file_events_out)))
-file_events_out <- "events_ukb_906030_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.txt"
-events <- readRDS(file.path(dir_out, gsub(".txt", ".rds", file_events_out)))
+# file_events_out <- "events_ukb_906030_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.txt"
+# events <- readRDS(file.path(dir_out, gsub(".txt", ".rds", file_events_out)))
 
 # create ped ----
 events_ct <- events %>%
@@ -367,12 +377,12 @@ ped_events <- add_timeScales(ped_events)
 file_ped_events_out <- paste0("ped_", file_events_out)
 saveRDS(ped_events, file.path(dir_out, gsub(".txt", ".rds", file_ped_events_out)))
 
-# split ped by transition ----
-ped_events_list <- split_ped(ped_events)
+# # split ped by transition ----
+# ped_events_list <- split_ped(ped_events)
 
-for(i in 1:3) {
-    saveRDS(ped_events_list[[i]], file.path(dir_out, gsub(".txt", paste0("_", i-1, i, ".rds"), file_ped_events_out)))
-}
+# for(i in 1:3) {
+#     saveRDS(ped_events_list[[i]], file.path(dir_out, gsub(".txt", paste0("_", i-1, i, ".rds"), file_ped_events_out)))
+# }
 
 # create anonymized data ----
 set.seed(123)

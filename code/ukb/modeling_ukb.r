@@ -1,29 +1,34 @@
 
 # load packages ----
-source("/wis37138/msm-timeScales-ieb-ic-ckd/code/helpers_ukb.r")
+source("/wis37138/msm-timeScales-ieb-ic-ckd/code/ukb/helpers_ukb.r")
 
 library(etm)
 library(mvna)
 library(kmi)
 library(mgcv)
 library(scales)
-library(nnet)
+# library(nnet)
+library(kableExtra)
 
-# set directories ----
+# setup ----
 setwd("wis37138") # only necessary to enable plotting because I have no write permissions in "/"
 
 dir_data <- "/wis37138/msm-timeScales-ieb-ic-ckd/data/ukb"
-dir_out <- "/wis37138/msm-timeScales-ieb-ic-ckd/results/ukb/msm"
-file_pheno <- "pheno_ukb_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
-file_events <- "events_ukb_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"
-file_ped_events <- "ped_events_ukb_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"
+dir_out <- "/wis37138/msm-timeScales-ieb-ic-ckd/results/ukb/"
+file_pheno <- "pheno_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical.txt"
+file_events <- "events_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"
+file_ped_events <- "ped_events_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"
+file_ped_events_end <- "ped_events_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical_end_imputed_r0_ageScale.rds"
 
 # load data ----
 pheno <- fread(file.path(dir_data, file_pheno))
 min_age <- 35
 
 events <- readRDS(file.path(dir_data, file_events)) %>%
-  mutate(to = ifelse(to == "death", 4, to), transition = paste0(from, "->", to)) %>%
+  mutate(
+    to = ifelse(to == "death", 4, to),
+    transition = paste0(from, "->", to),
+    diabetes = ifelse(diabetes == 0, 0, 1)) %>%
   filter(agestart >= min_age)
 
 ped_events <- readRDS(file.path(dir_data, file_ped_events)) %>%
@@ -31,6 +36,7 @@ ped_events <- readRDS(file.path(dir_data, file_ped_events)) %>%
   mutate(
     to = ifelse(to == "death", 4, to),
     transition = paste0(from, "->", to) %>% as.factor(), # for pammtools::add_surv_prob
+    diabetes = ifelse(diabetes == 0, 0, 1)
   ) %>%
   add_transVars()
 
@@ -43,7 +49,7 @@ ped_events <- readRDS(file.path(dir_data, file_ped_events)) %>%
 
 # Descriptive statistics ----
 
-## Table 1
+## Table 1 ----
 dim(events)
 table(events$transition)
 idx <- unique(events$id)
@@ -241,31 +247,53 @@ events_w2 <- events_w %>%
   mutate(weight_g = 1 / n()) %>%
   ungroup()
 
-library(nnet)
-library(splines)
+ps_formula_rhs <- ~ diabetes +
+                     s(sc_BMI, bs = 'ps', k = 20) +
+                     s(sc_UACR, bs = 'ps', k = 20) +
+                     s(pgs_cross_594_umod, bs = 'ps', k = 20) +
+                     smoking +
+                     s(eGFRcrea, bs = 'ps', k = 20)
+
+formula_list <- list(
+  update(ps_formula_rhs, rs_77924615_A_G_genotype ~ .), # 2 vs 1
+  ps_formula_rhs # 3 vs 1
+)
 
 events_ps <- events_w2 %>%
+  mutate(rs_77924615_A_G_genotype = as.numeric(rs_77924615_A_G_genotype) - 1) %>%
   group_by(from) %>%
   do({
     df <- .
 
-    # MODEL 1: propensity score with covariates
-    # m_prop <- multinom(rs_77924615_A_G_genotype ~ diabetes + BMI_cat + albuminuria + pgs_cross_594_umod + smoking,
-    #                    data = df, trace = FALSE)
-    m_prop <- multinom(rs_77924615_A_G_genotype ~ diabetes + ns(sc_BMI, df=4) + ns(sc_UACR, df=4) + ns(pgs_cross_594_umod, df=4) + smoking,
-                       data = df, trace = FALSE)
-    prob_mat_prop <- predict(m_prop, newdata = df, type = "prob")
+    # --- MODEL 1: with covariates ---
+    m_prop <- mgcv::gam(
+      formula_list,
+      data = df,
+      family = mgcv::multinom(K = 2),
+      control = gam.control(nthreads = 20)
+    )
+    prob_mat_prop <- predict(m_prop, newdata = df, type = "response")
 
-    # MODEL 2: raw genotype probability (no covariates)
-    m_raw <- multinom(rs_77924615_A_G_genotype ~ 1, data = df, trace = FALSE)
-    prob_mat_raw <- predict(m_raw, newdata = df, type = "prob")
+    # --- MODEL 2: raw probability (intercept only) ---
+    m_raw <- mgcv::gam(
+      list(rs_77924615_A_G_genotype ~ 1, ~1),
+      data = df,
+      family = mgcv::multinom(K = 2),
+      control = gam.control(nthreads = 20)
+    )
+    prob_mat_raw <- predict(m_raw, newdata = df, type = "response")
 
-    # Index for observed genotype
-    geno_index <- as.integer(df$rs_77924615_A_G_genotype)
+    # --- VECTORIZED SCORE EXTRACTION (THE FAST WAY) ---
 
-    # Extract scores
-    pscore <- vapply(seq_len(nrow(df)), function(i) prob_mat_prop[i, geno_index[i]], numeric(1))
-    rawscore <- vapply(seq_len(nrow(df)), function(i) prob_mat_raw[i, geno_index[i]], numeric(1))
+    # Create a 2-column matrix of [row, column] indices
+    # The column index is the genotype (0,1,2) + 1 to match R's 1,2,3 indexing
+    idx <- cbind(seq_len(nrow(df)), df$rs_77924615_A_G_genotype + 1)
+
+    # Extract all the scores in one go
+    pscore <- prob_mat_prop[idx]
+    rawscore <- prob_mat_raw[idx]
+
+    # --- END VECTORIZED EXTRACTION ---
 
     df %>% mutate(
       propensity_score_0 = prob_mat_prop[, 1],
@@ -288,6 +316,9 @@ events_ps <- events_ps %>%
   ) %>%
   mutate(from_num = gsub("State ", "", from)) %>%
   mutate(from_num = as.character(from_num))  # match ped_events$from
+
+saveRDS(events_ps, file.path(dir_data, "events_ps_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"))
+events_ps <- readRDS(file.path(dir_data, "events_ps_ukb_603015_noAKI6months_noNephrectomy6months_ni2+_GPclinical_mid_imputed_r0_ageScale.rds"))
 
 ### descriptive plots (old) ----
 
@@ -655,6 +686,58 @@ for (genotype in c("0", "1", "2")) {
   ggsave(file.path(dir_out, paste0("/figures/descriptives/smoking_barplot_states_combined_genotype_", genotype, ".png")), plot = barplot_smoking_genotype, width = 10, height = 18, units = "cm")
 }
 
+## correlation between G and risk factors ----
+pheno_bl <- pheno %>%
+  filter(age == age0)
+
+pheno_ckd <- pheno %>%
+  select(-age0) %>%
+  group_by(id) %>%
+  arrange(id, age) %>%  # Ensure data is ordered by age within each group
+  mutate(below_60 = eGFRcrea < 60) %>%  # Create a logical column for condition
+  mutate(subsequent_below_60 = below_60 & lag(below_60, default = FALSE)) %>%  # Check for subsequent values below 60
+  filter(cumsum(subsequent_below_60) > 0) %>%  # Filter to keep rows after the first occurrence of two subsequent below 60 values
+  mutate(age0 = min(age), age0_c = (age0-50)/10, t = age-age0, t_c=t/10) %>%  # Create a new column for age starting at 0
+  ungroup() %>%
+  filter(age == age0)
+
+pheno_severe_ckd <- pheno %>%
+  select(-age0) %>%
+  group_by(id) %>%
+  arrange(id, age) %>%  # Ensure data is ordered by age within each group
+  mutate(below_30 = eGFRcrea < 30) %>%  # Create a logical column for condition
+  mutate(subsequent_below_30 = below_30 & lag(below_30, default = FALSE)) %>%  # Check for subsequent values below 60
+  filter(cumsum(subsequent_below_30) > 0) %>%  # Filter to keep rows after the first occurrence of two subsequent below 60 values
+  mutate(age0 = min(age), age0_c = (age0-50)/10, t = age-age0, t_c=t/10) %>%  # Create a new column for age starting at 0
+  ungroup() %>%
+  filter(age == age0)
+
+risk_factor <- "pgs_cross_594_umod"
+
+events_0 <- events_w %>% filter(from == "State 0")
+cor_0 <- cor.test(x = events_0$rs77924615_A_G, y = as.numeric(events_0[[risk_factor]]), use = "pairwise.complete.obs")
+cor_0 # 0.004022611
+
+events_1 <- events_w %>% filter(from == "State 1")
+cor_1 <- cor.test(x = events_1$rs77924615_A_G, y = as.numeric(events_1[[risk_factor]]), use = "pairwise.complete.obs")
+cor_1 # 0.009339309
+
+events_2 <- events_w %>% filter(from == "State 2")
+cor_2 <- cor.test(x = events_2$rs77924615_A_G, y = as.numeric(events_2[[risk_factor]]), use = "pairwise.complete.obs")
+cor_2 # -0.007235931
+
+cor_pop <- cor.test(x = pheno$rs77924615_A_G, y = pheno[[risk_factor]], use = "pairwise.complete.obs")
+cor_pop # -0.0009661443
+
+cor_bl <- cor.test(x = pheno_bl$rs77924615_A_G, y = pheno_bl[[risk_factor]], use = "pairwise.complete.obs")
+cor_bl # -0.0032912
+
+cor_ckd <- cor.test(x = pheno_ckd$rs77924615_A_G, y = pheno_ckd[[risk_factor]], use = "pairwise.complete.obs")
+cor_ckd # -0.006810643
+
+cor_severe_ckd <- cor.test(x = pheno_severe_ckd$rs77924615_A_G, y = pheno_severe_ckd[[risk_factor]], use = "pairwise.complete.obs")
+cor_severe_ckd # 0.01379865
+
 ## propensity scores ----
 
 ### scatter plots ----
@@ -735,6 +818,118 @@ ped_events_with_weights <- ped_events %>%
     events_ps %>% select(id, from_num, stabilized_weight),
     by = c("id", "from" = "from_num")
   )
+
+#### overall modeling ----
+
+formulas <- list(
+  unadjusted = "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  sex * transition + rs77924615_A_G * transition",
+  adjusted = "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  sex * transition + rs77924615_A_G * transition +
+  pgs_cross_594_umod * transition + diabetes * transition +
+  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
+  s(sc_UACR, bs = 'ps', k = 20, by = transition) +
+  smoking * transition +
+  s(eGFRcrea, bs = 'ps', k = 20, by = transition)"
+)
+
+weights <- list(
+  unweighted = NULL,
+  weighted = ped_events_with_weights$stabilized_weight
+)
+
+scenarios <- expand.grid(
+  formula_name = names(formulas),
+  weight_name = names(weights),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    formula = formulas[formula_name],
+    wvec = weights[weight_name]
+  )
+
+num_cores <- 4
+registerDoParallel(cores = num_cores)
+
+results_list <- foreach(i = 1:nrow(scenarios), .packages = c("mgcv", "dplyr")) %dopar% {
+
+  current_scenario <- scenarios[i, ]
+  fmla <- as.formula(current_scenario$formula[[1]])
+  w <- current_scenario$wvec[[1]]
+
+  m <- bam(
+    formula = fmla,
+    data = ped_events_with_weights,
+    family = poisson(),
+    weights = w,
+    discrete = TRUE
+  )
+
+  su <- summary(m)
+  vc <- vcov(m)
+
+  term_main <- "rs77924615_A_G"
+  coef_main <- su$p.coeff[term_main]
+  se_main   <- su$se[term_main]
+  p_main    <- su$p.pv[term_main]
+
+  term_int_12 <- "transition1->2:rs77924615_A_G"
+  coef_12 <- coef_main + su$p.coeff[term_int_12]
+  se_12   <- sqrt(se_main^2 + su$se[term_int_12]^2 + 2 * vc[term_main, term_int_12])
+  p_12    <- 2 * pnorm(abs(coef_12 / se_12), lower.tail = FALSE)
+
+  term_int_23 <- "transition2->3:rs77924615_A_G"
+  coef_23 <- coef_main + su$p.coeff[term_int_23]
+  se_23   <- sqrt(se_main^2 + su$se[term_int_23]^2 + 2 * vc[term_main, term_int_23])
+  p_23    <- 2 * pnorm(abs(coef_23 / se_23), lower.tail = FALSE)
+
+  tibble(
+    formula = current_scenario$formula_name,
+    weighting = current_scenario$weight_name,
+    term = c("0->1", "1->2", "2->3"),
+    coef = c(coef_main, coef_12, coef_23),
+    se = c(se_main, se_12, se_23),
+    p = c(p_main, p_12, p_23)
+  )
+}
+
+stopImplicitCluster()
+
+results <- bind_rows(results_list)
+
+out <- results %>%
+  mutate(
+    formula = ifelse(formula == "adjusted", "yes", "no"),
+    weighting = ifelse(weighting == "weighted", "yes", "no"),
+    coef = round(coef, 3),
+    se = round(se, 3),
+    p = if_else(round(as.numeric(p), 3) == 0, "$<$0.001", sprintf("%.3f", as.numeric(p))),
+    term = gsub("->", " $\\\\rightarrow$ ", term)
+  ) %>%
+  rename(
+    Adjustment = formula,
+    Weighting = weighting,
+    Transition = term,
+    Coefficient = coef,
+    SE = se,
+    `P-value` = p
+  )
+
+write.csv2(out, file = file.path(dir_out, "weighting_and_adjusting_models_results_msm.csv"), row.names = FALSE)
+
+latex_table <- kable(out, "latex", booktabs = TRUE, escape = FALSE,
+      caption = "\\caption{\\captionukbadjustmentweighting}",
+      label = "tab:ukb-adjustment-weighting",
+      align = "cccrrr") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+
+writeLines(latex_table, file.path(dir_out, "tables", "ukb-adjustment-weighting.tex"))
+
+#### transition specific modeling ----
 
 # 1. Define transitions/from codes
 transitions <- tibble(
@@ -920,65 +1115,61 @@ View(results %>% arrange(variant, transition))
 risk_factors <- c("diabetes", "albuminuria", "BMI_cat", "smoking")
 
 ### unweighted
-
-# for (risk_factor in risk_factors) {
-
-#   p <- ggplot(
-#     events_ps %>% filter(!is.na(.data[[risk_factor]])),
-#     aes_string(x = risk_factor, weight = "weight_g")
-#   ) +
-#     geom_bar(color = "black", fill = "steelblue", width = 0.7) +
-#     # rows = from, cols = genotype
-#     facet_grid(from ~ rs_77924615_A_G_genotype) +
-#     scale_y_continuous(labels = percent_format(accuracy = 1)) +
-#     labs(
-#       title = paste(risk_factor, " for UMOD genotype by state"),
-#       x     = risk_factor,
-#       y     = "Relative frequency"
-#     ) +
-#     theme(
-#       strip.background = element_rect(fill = "grey95"),
-#       strip.text      = element_text(face = "bold")
-#     )
-
-#   out_file <- file.path(
-#     dir_out,
-#     "figures/descriptives/barplots",
-#     paste0("unweighted_", risk_factor, ".png")
-#   )
-#   ggsave(out_file, plot = p, width = 18, height = 18, units = "cm")
-# }
-
 for (risk_factor in risk_factors) {
 
+  plot_data <- events_ps %>% filter(!is.na(.data[[risk_factor]]))
+
+  # First, capture the original, default level order (e.g., "macro", "micro", "normo")
+  plot_data[[risk_factor]] <- as.factor(plot_data[[risk_factor]])
+  original_levels <- levels(plot_data[[risk_factor]])
+
+  # Then, reverse the factor levels in the data to control the stacking order
+  # This makes the first original level (e.g. "macro") appear at the bottom
+  plot_data[[risk_factor]] <- factor(plot_data[[risk_factor]], levels = rev(original_levels))
+
+  num_levels <- length(original_levels)
+
   p <- ggplot(
-    events_ps %>% filter(!is.na(.data[[risk_factor]])),
-    aes_string(x = risk_factor)
+    plot_data,
+    aes_string(x = "rs_77924615_A_G_genotype", fill = risk_factor)
   ) +
     geom_bar(
-      aes(
-        y     = after_stat(prop),
-        group = 1
-      ),
-      stat    = "count",
-      color   = "black",
-      fill    = "steelblue",
-      width   = 0.7
+      position = "fill",
+      stat     = "count",
+      color    = "black",
+      width    = 0.7
     ) +
-    facet_grid(from ~ rs_77924615_A_G_genotype) +
+    facet_grid(from ~ .) +
     scale_y_continuous(
-      labels = percent_format(accuracy = 1),
-      limits = c(0, 1)
+      labels = percent_format(accuracy = 1)
     ) +
     labs(
-      title = paste(risk_factor, "for UMOD genotype by state", "(unweighted)"),
-      x     = risk_factor,
-      y     = "Relative frequency"
+      # title = paste(risk_factor, "for UMOD genotype by state", "(unweighted)"),
+      x     = "Genotype of rs7792415",
+      y     = "Relative frequency (unweighted)",
+      fill  = risk_factor
     ) +
     theme(
-      strip.background = element_rect(fill = "grey95"),
-      strip.text       = element_text(face = "bold")
+      strip.background   = element_rect(fill = "grey95"),
+      strip.text         = element_text(face = "bold"),
+      legend.title       = element_blank(),
+      legend.position    = "bottom",
+      legend.direction   = "horizontal"
     )
+
+  if (num_levels == 3) {
+    p <- p + scale_fill_manual(
+      # Use `breaks` to force the legend order back to the original
+      breaks = original_levels,
+      # Assign colors to the original levels by name
+      values = setNames(c("darkgrey", "skyblue", "orange"), original_levels)
+    )
+  } else if (num_levels == 2) {
+    p <- p + scale_fill_manual(
+      breaks = original_levels,
+      values = setNames(c("darkgrey", "skyblue"), original_levels)
+    )
+  }
 
   ggsave(
     file.path(
@@ -987,50 +1178,74 @@ for (risk_factor in risk_factors) {
       paste0("unweighted_", risk_factor, ".png")
     ),
     plot  = p,
-    width = 18, height = 18, units = "cm"
+    width = 12, height = 18, units = "cm"
   )
 }
 
 ## weighted by stabilized_weight
 for (risk_factor in risk_factors) {
 
+  plot_data <- events_ps %>% filter(!is.na(.data[[risk_factor]]))
+
+  # First, capture the original, default level order
+  plot_data[[risk_factor]] <- as.factor(plot_data[[risk_factor]])
+  original_levels <- levels(plot_data[[risk_factor]])
+
+  # Then, reverse the factor levels in the data to control the stacking order
+  plot_data[[risk_factor]] <- factor(plot_data[[risk_factor]], levels = rev(original_levels))
+
+  num_levels <- length(original_levels)
+
   p <- ggplot(
-    events_ps %>% filter(!is.na(.data[[risk_factor]])),
-    aes_string(x = risk_factor, weight = "stabilized_weight")
+    plot_data,
+    # The only change to the plot call is adding the 'weight' aesthetic
+    aes_string(x = "rs_77924615_A_G_genotype", fill = risk_factor, weight = "stabilized_weight")
   ) +
     geom_bar(
-      aes(
-        y     = after_stat(prop),
-        group = 1
-      ),
-      stat    = "count",
-      color   = "black",
-      fill    = "steelblue",
-      width   = 0.7
+      position = "fill",
+      stat     = "count",
+      color    = "black",
+      width    = 0.7
     ) +
-    facet_grid(from ~ rs_77924615_A_G_genotype) +
+    facet_grid(from ~ .) +
     scale_y_continuous(
-      labels = percent_format(accuracy = 1),
-      limits = c(0, 1)
+      labels = percent_format(accuracy = 1)
     ) +
     labs(
-      title = paste(risk_factor, "for UMOD genotype by state", "(weighted)"),
-      x     = risk_factor,
-      y     = "Relative frequency"
+      # Updated y-axis label to reflect weighting
+      x     = "Genotype of rs7792415",
+      y     = "Relative frequency (weighted)",
+      fill  = risk_factor
     ) +
     theme(
-      strip.background = element_rect(fill = "grey95"),
-      strip.text       = element_text(face = "bold")
+      strip.background   = element_rect(fill = "grey95"),
+      strip.text         = element_text(face = "bold"),
+      legend.title       = element_blank(),
+      legend.position    = "bottom",
+      legend.direction   = "horizontal"
     )
+
+  if (num_levels == 3) {
+    p <- p + scale_fill_manual(
+      breaks = original_levels,
+      values = setNames(c("darkgrey", "skyblue", "orange"), original_levels)
+    )
+  } else if (num_levels == 2) {
+    p <- p + scale_fill_manual(
+      breaks = original_levels,
+      values = setNames(c("darkgrey", "skyblue"), original_levels)
+    )
+  }
 
   ggsave(
     file.path(
       dir_out,
       "figures/descriptives/barplots",
+      # Updated filename to reflect weighting
       paste0("weighted_", risk_factor, ".png")
     ),
     plot  = p,
-    width = 18, height = 18, units = "cm"
+    width = 12, height = 18, units = "cm"
   )
 }
 
@@ -1194,25 +1409,6 @@ plot_love <- function(smd_df, genotype_lvl, st) {
 genotype_levels_list <- c("0_1", "1_2", "0_2")
 states               <- c("State 0", "State 1", "State 2")
 
-# for (gen in genotype_levels_list) {
-#   for (st in states) {
-#     # make the plot
-#     p <- plot_love(smd_results, gen, st)
-
-#     # build a filename like "1_2State0.png"
-#     fname <- paste0(gen, gsub(" ", "", st), ".png")
-
-#     # save it
-#     ggsave(
-#       filename = file.path(dir_out, "figures", "descriptives", "loveplots", fname),
-#       plot     = p,
-#       width    = 18,
-#       height   = 18,
-#       units    = "cm"
-#     )
-#   }
-# }
-
 library(patchwork)
 for (st in states) {
   # build the three plots, adding a subtitle for clarity
@@ -1327,21 +1523,46 @@ prog_after_onset_slices <- c(2, 5, 10, 15)
 
 formulas <- list(
   pam_stss = "ped_status ~
-    s(tend, by = transition) +
-    s(age_onset, by = transition_after_onset_strat) +
-    s(age_progression, by = transition_after_progression) +
+    s(tend, bs = 'ps', k = 20, by = transition) +
+    s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
     sex*transition",
   pam_mts = "ped_status ~
-    s(tend, by = transition_to_death) +
-    s(tend_onset, by = transition_after_onset) +
-    s(age_onset, by = transition_after_onset) +
-    s(tend_progression, by = transition_after_progression) +
-    s(age_progression, by = transition_after_progression) +
+    s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+    s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+    s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+    s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
     sex*transition"
 )
 
 num_cores   <- length(formulas)
+registerDoParallel(cores = num_cores)
+foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% {
 
+  mod_formula <- as.formula(formulas[[model]])
+
+  mod <- mgcv::bam(
+    formula = mod_formula,
+    data = ped_events,
+    family = poisson(),
+    offset = offset,
+    method ="fREML",
+    discrete = TRUE)
+
+  ped_new <- ped_events %>% make_newped(mod)
+  saveRDS(ped_new, file.path(dir_data, sprintf("ped_%s.rds", model)))
+  # ped_new <- readRDS(file.path(dir_data, sprintf("ped_%s.rds", model)))
+
+}
+stopImplicitCluster()
+
+ped_new_stss <- readRDS(file.path(dir_data, "ped_pam_stss.rds"))
+ped_new_mts  <- readRDS(file.path(dir_data, "ped_pam_mts.rds"))
+
+ranges <- extract_ranges(ped_new_stss, ped_new_mts, transitions = c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4"), scales = c("loghazard", "hazard", "cumu_hazard"))
+
+num_cores   <- length(formulas)
 registerDoParallel(cores = num_cores)
 foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% {
 
@@ -1350,15 +1571,15 @@ foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% 
     dir.create(fig_dir, recursive = TRUE)
   }
 
-  mod_formula <- as.formula(formulas[[model]])
+  # mod_formula <- as.formula(formulas[[model]])
 
-  mod <- mgcv::bam(
-    formula = mod_formula,
-    data = ped_events,
-    family=poisson(),
-    offset=offset,
-    method="fREML",
-    discrete = TRUE)
+  # mod <- mgcv::bam(
+  #   formula = mod_formula,
+  #   data = ped_events,
+  #   family=poisson(),
+  #   offset=offset,
+  #   method="fREML",
+  #   discrete = TRUE)
 
   # ped_new <- ped_events %>% make_newped(mod)
   # saveRDS(ped_new, file.path(dir_data, sprintf("ped_%s.rds", model)))
@@ -1366,16 +1587,16 @@ foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% 
 
   for(trans in trans_2d) {
     trans_print <- gsub("->", "", trans)
-    plots <- create_2d_plots(ped_new, model, trans)
-    saveRDS(plots, file.path(dir_data, paste0(model, "_plots_", trans_print, ".rds")))
+    plots <- create_2d_plots(ped_new, model, trans, ranges)
+    saveRDS(plots, file.path(dir_data, "baseline_plots", paste0(model, "_plots_", trans_print, ".rds")))
   }
 
   for(trans in trans_3d) {
     trans_print <- gsub("->", "", trans)
-    plots_age <- create_3d_plots(ped_new, model, trans, "age", age_onset_slices, prog_after_onset_slices)
-    saveRDS(plots_age, file.path(dir_data, paste0(model, "_plots_age_", trans_print, ".rds")))
-    plots_time <- create_3d_plots(ped_new, model, trans, "time", age_onset_slices, prog_after_onset_slices)
-    saveRDS(plots_time, file.path(dir_data, paste0(model, "_plots_time_", trans_print, ".rds")))
+    plots_age <- create_3d_plots(ped_new, model, trans, ranges, "age", age_onset_slices, prog_after_onset_slices)
+    saveRDS(plots_age, file.path(dir_data, "baseline_plots", paste0(model, "_plots_age_", trans_print, ".rds")))
+    plots_time <- create_3d_plots(ped_new, model, trans, ranges, "time", age_onset_slices, prog_after_onset_slices)
+    saveRDS(plots_time, file.path(dir_data, "baseline_plots", paste0(model, "_plots_time_", trans_print, ".rds")))
   }
 
   # lapply(trans_2d, function(trans) {create_2d_plots(ped_new, model, trans)})
@@ -1388,9 +1609,9 @@ stopImplicitCluster()
 ## null models ----
 ### pam stss ----
 formula_stss <- "ped_status ~
-  s(tend, by = transition) +
-  s(age_onset, by = transition_after_onset_strat) +
-  s(age_progression, by = transition_after_progression) +
+  s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition"
 
 pam_stss <- mgcv::bam(
@@ -1405,11 +1626,11 @@ summary(pam_stss)
 
 ### pam mts ----
 formula_mts <- "ped_status ~
-  s(tend, by = transition_to_death) +
-  s(tend_onset, by = transition_after_onset) +
-  s(age_onset, by = transition_after_onset) +
-  s(tend_progression, by = transition_after_progression) +
-  s(age_progression, by = transition_after_progression) +
+  s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+  s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition"
 
 pam_mts <- mgcv::bam(
@@ -1429,9 +1650,9 @@ anova(pam_stss, pam_mts)
 
 ### pam stss ----
 formula_stss_genetics_naive <- "ped_status ~
-  s(tend, by = transition) +
-  s(age_onset, by = transition_after_onset_strat) +
-  s(age_progression, by = transition_after_progression) +
+  s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition +
   rs77924615_A_G*transition"
 
@@ -1447,11 +1668,11 @@ summary(pam_stss_genetics_naive)
 
 ### pam mts ----
 formula_mts_genetics_naive <- "ped_status ~
-  s(tend, by = transition_to_death) +
-  s(tend_onset, by = transition_after_onset) +
-  s(age_onset, by = transition_after_onset) +
-  s(tend_progression, by = transition_after_progression) +
-  s(age_progression, by = transition_after_progression) +
+  s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+  s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition +
   rs77924615_A_G*transition"
 
@@ -1464,22 +1685,6 @@ pam_mts_genetics_naive <- mgcv::bam(
   discrete = TRUE)
 
 summary(pam_mts_genetics_naive)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## null model ----
 
@@ -1502,7 +1707,6 @@ pam_null <- mgcv::bam(
 
 summary(pam_null)
 AIC(pam_null, pam_null_strat_adj)
-
 
 ## null model (reduced after visual inspection) ----
 
@@ -1975,7 +2179,6 @@ df_counts %>% filter(transition == "1->2", ped_status == 1) %>% nrow() # #events
 length(idx_2) # #at-risk for 2->3
 df_counts %>% filter(transition == "2->3", ped_status == 1) %>% nrow() # #events for 2->3
 
-
 # Helper to format p‐values in scientific notation: “mantissa x 10^exponent”
 format_sci <- function(pval, digits = 2) {
   sci_str <- formatC(pval, format = "e", digits = digits)
@@ -1987,11 +2190,11 @@ format_sci <- function(pval, digits = 2) {
 
 # 1) Define the “always‐included” part of the formula:
 base_terms <- "
-  s(tend, by = transition_to_death) +
-  s(tend_onset, by = transition_after_onset) +
-  s(age_onset, by = transition_after_onset) +
-  s(tend_progression, by = transition_after_progression) +
-  s(age_progression, by = transition_after_progression) +
+  s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+  s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex * transition
 "
 
@@ -2350,3 +2553,208 @@ slice_pgs_list <- lapply(transitions, function(tr) {
 # Combine these plots into one figure (again, adjust layout as needed)
 combined_slice_pgs <- wrap_plots(slice_pgs_list, ncol = 1)
 combined_slice_pgs
+
+# Sensitivity Analysis: Interval Censoring ----
+
+ped_events_end <- readRDS(file.path(dir_data, file_ped_events_end)) %>%
+  filter(tstart >= min_age) %>%
+  mutate(
+    to = ifelse(to == "death", 4, to),
+    transition = paste0(from, "->", to) %>% as.factor(), # for pammtools::add_surv_prob
+  ) %>%
+  add_transVars()
+
+## null models ----
+### pam stss ----
+formula_stss <- "ped_status ~
+  s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  sex*transition"
+
+pam_stss_end <- mgcv::bam(
+  formula = as.formula(formula_stss),
+  data = ped_events_end,
+  family = poisson(),
+  offset = offset,
+  method = "fREML",
+  discrete = TRUE)
+
+summary(pam_stss_end)
+
+### pam mts ----
+formula_mts <- "ped_status ~
+  s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+  s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+  s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  sex*transition"
+
+pam_mts_end <- mgcv::bam(
+  formula = as.formula(formula_mts),
+  data = ped_events_end,
+  family = poisson(),
+  offset = offset,
+  method = "fREML",
+  discrete = TRUE)
+
+summary(pam_mts_end)
+
+AIC(pam_stss, pam_mts, pam_stss_end, pam_mts_end)
+anova(pam_stss, pam_mts, pam_stss_end, pam_mts_end)
+
+### comparison table of pam stss (mid) and pam stss (end) ----
+formula_stss_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
+  s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+  sex * transition + rs77924615_A_G * transition +
+  pgs_cross_594_umod * transition + diabetes * transition +
+  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
+  s(sc_UACR, bs = 'ps', k = 20, by = transition) +
+  smoking * transition +
+  s(eGFRcrea, bs = 'ps', k = 20, by = transition)"
+
+pam_stss_full <- mgcv::bam(
+  formula = as.formula(formula_stss_full),
+  data = ped_events,
+  family = poisson(),
+  offset = offset,
+  method = "fREML",
+  discrete = TRUE)
+
+pam_stss_full_end <- mgcv::bam(
+  formula = as.formula(formula_stss_full),
+  data = ped_events_end,
+  family = poisson(),
+  offset = offset,
+  method = "fREML",
+  discrete = TRUE)
+
+
+models <- list(
+  mid = pam_stss_full,
+  end = pam_stss_full_end
+)
+
+# Vector of the main effect term names for your risk factors
+risk_factors <- c("rs77924615_A_G", "diabetes", "smoking")
+
+# Use purrr::map_dfr to apply the function and row-bind the results
+results_long <- purrr::map_dfr(
+  names(models),
+  function(model_name) {
+    purrr::map_dfr(
+      risk_factors,
+      function(risk_factor) {
+        tryCatch({
+          extract_risk_factor_effects(models[[model_name]], risk_factor) %>%
+            mutate(risk_factor = risk_factor)
+        }, error = function(e) {
+          message("Error processing ", risk_factor, " in model ", model_name, ": ", e$message)
+          return(NULL)
+        })
+      }
+    ) %>%
+      mutate(estimation_point = model_name)
+  }
+)
+
+results_wide <- results_long %>%
+  pivot_wider(
+    names_from = estimation_point,
+    values_from = c(coef, se, p)
+  )
+
+risk_factor_display_names <- c(
+  "rs77924615_A_G" = "G",
+  "diabetes"       = "Diabetes",
+  "smoking"        = "Smoking"
+)
+
+results_for_table <- results_wide %>%
+  arrange(factor(risk_factor, levels = names(risk_factor_display_names)), term) %>%
+  mutate(
+    Transition_fmt = paste0("\\hspace{1em}", str_replace(term, "->", "$\\\\rightarrow$")),
+    coef_mid_fmt   = sprintf("%.3f", coef_mid),
+    se_mid_fmt     = sprintf("%.3f", se_mid),
+    p_mid_fmt      = if_else(round(as.numeric(p_mid), 3) == 0, "$<$0.001", sprintf("%.3f", as.numeric(p_mid))),
+    coef_end_fmt   = sprintf("%.3f", coef_end),
+    se_end_fmt     = sprintf("%.3f", se_end),
+    p_end_fmt      = if_else(round(as.numeric(p_end), 3) == 0, "$<$0.001", sprintf("%.3f", as.numeric(p_end)))
+  ) %>%
+  mutate(
+    is_shaded = (row_number() %% 2 == 1),
+    across(
+      .cols = ends_with("_fmt"),
+      .fns = ~ if_else(
+        is_shaded,
+        paste0("\\cellcolor{gray!10}{", . , "}"),
+        .
+      )
+    )
+  ) %>%
+  select(
+    risk_factor,
+    Transition = Transition_fmt,
+    coef_mid = coef_mid_fmt,
+    se_mid = se_mid_fmt,
+    p_mid = p_mid_fmt,
+    coef_end = coef_end_fmt,
+    se_end = se_end_fmt,
+    p_end = p_end_fmt
+  )
+
+column_headers <- c(
+  "Transition",
+  "Coef.", "SE", "P-value",
+  "Coef.", "SE", "P-value"
+)
+
+header_spec <- c(
+  " " = 1,
+  "Mid-Point Estimation" = 3,
+  "End-Point Estimation" = 3
+)
+
+# --- CORRECTED CODE BLOCK ---
+# Create the named vector for pack_rows explicitly to use the display names
+pack_rows_index <- table(factor(results_for_table$risk_factor, levels = names(risk_factor_display_names)))
+names(pack_rows_index) <- risk_factor_display_names
+# --- END OF CORRECTED BLOCK ---
+
+latex_table_object <- results_for_table %>%
+  select(-risk_factor) %>%
+  kbl(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = column_headers,
+    align = "lrrrrrr",
+    caption = "\\captionukbic",
+    label = "ukb-ic",
+    escape = FALSE
+  ) %>%
+  add_header_above(header_spec) %>%
+  # Use the correctly named index vector here
+  pack_rows(
+    index = pack_rows_index,
+    latex_align = 'l',
+    bold = TRUE,
+    latex_gap_space = "0.3em"
+  )
+
+latex_final_string <- latex_table_object %>%
+  str_replace(
+    "\\\\centering",
+    "\\\\centering\n\\\\fontsize{9}{11}\\\\selectfont"
+  ) %>%
+  str_replace_all(
+    "\\\\cmidrule\\(lr\\)",
+    "\\\\cmidrule(l{3pt}r{3pt})"
+  ) %>%
+  str_replace(
+    "\\\\begin\\{table\\}",
+    "\\\\begin{table}[!h]"
+  )
+
+writeLines(latex_final_string, file.path(dir_out, "tables", "ukb-ic.tex"))

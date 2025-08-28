@@ -398,6 +398,9 @@ create_events <- function(pheno, snp_cols, adjust_ids, age_eskd_dt, selected_col
     if (is.null(selected_cols)) selected_cols <- colnames(events)
     events <- events[, ..selected_cols]
 
+    # Remove rows where from equals to (invalid transitions)
+    events <- events[from != to]
+
     return(events)
 }
 
@@ -1200,13 +1203,39 @@ make_newped <- function(ped, mod, ci = TRUE) {
   return(ped_new)
 }
 
-create_2d_plots <- function(ped_new, model, trans) {
+extract_ranges <- function(ped_new_1, ped_new_2, transitions = c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4"), scales = c("loghazard", "hazard", "cumu_hazard")) {
+
+  ranges <- list()
+
+  for (scale in scales) {
+  for (transition in transitions) {
+    # Create variable name
+    transition_code <- gsub("->", "", transition)
+    var_name <- paste0("fit_range_", scale, "_", transition_code)
+
+    # Calculate range across both datasets
+    values_1 <- ped_new_1[[scale]][ped_new_1$transition == transition]
+    values_2 <- ped_new_2[[scale]][ped_new_2$transition == transition]
+
+    min_val <- min(min(values_1, na.rm = TRUE), min(values_2, na.rm = TRUE))
+    max_val <- max(max(values_1, na.rm = TRUE), max(values_2, na.rm = TRUE))
+
+    ranges[[var_name]] <- c(min_val, max_val)
+  }
+  }
+
+  return(ranges)
+}
+
+
+create_2d_plots <- function(ped_new, model, trans, ranges) {
 
   ped_new_trans <- ped_new %>% filter(transition == trans)
   digs       <- regmatches(trans, regexec("([0-9]+)->([0-9]+)", trans))[[1]]
   from_digit <- digs[2]; to_digit <- digs[3]
-  fit_range_loghazard <- range(ped_new_trans$loghazard, na.rm = TRUE)
-  fit_range_hazard <- range(ped_new_trans$hazard, na.rm = TRUE)
+  fit_range_loghazard <- ranges[[paste0("fit_range_loghazard_", from_digit, to_digit)]]
+  fit_range_hazard <- ranges[[paste0("fit_range_hazard_", from_digit, to_digit)]]
+  fit_range_cumu_hazard <- ranges[[paste0("fit_range_cumu_hazard_", from_digit, to_digit)]]
 
   p_loghazard <- ggplot(ped_new_trans, aes(x = tend, y = loghazard)) +
     # geom_ribbon(aes(ymin = loghazard_lower, ymax = loghazard_upper), alpha = 0.2, colour = NA) +
@@ -1223,7 +1252,7 @@ create_2d_plots <- function(ped_new, model, trans) {
   p_cumu <- ggplot(ped_new_trans, aes(x = tend, y = cumu_hazard)) +
     # geom_ribbon(aes(ymin = cumu_lower, ymax = cumu_upper), alpha = 0.2, colour = NA) +
     geom_line(linewidth = 1) +
-    scale_y_continuous(limits = c(0, max(ped_new_trans$cumu_hazard, na.rm = TRUE))) +
+    scale_y_continuous(limits = fit_range_cumu_hazard) +
     labs(title = paste("Transition", trans), x = "Age", y = "Cumulative Hazard")
 
   p_tp <- ggplot(ped_new_trans, aes(x = tend, y = trans_prob)) +
@@ -1252,13 +1281,16 @@ create_2d_plots <- function(ped_new, model, trans) {
 
 }
 
-create_3d_plots <- function(ped_new, model, trans, time_scale, age_onset_slices, prog_after_onset_slices = NULL, max_time_since_onset = 23, max_time_since_progression = 16) {
+create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset_slices, prog_after_onset_slices = NULL, max_time_since_onset = 23, max_time_since_progression = 16) {
 
   ped_new_trans <- ped_new %>% filter(transition == trans)
   digs <- regmatches(trans, regexec("([0-9]+)->([0-9]+)", trans))[[1]]
   from_digit <- digs[2]; to_digit <- digs[3]
   fit_range_loghazard <- range(ped_new_trans$loghazard, na.rm = TRUE)
   fit_range_hazard <- range(ped_new_trans$hazard, na.rm = TRUE)
+  fit_range_loghazard <- ranges[[paste0("fit_range_loghazard_", from_digit, to_digit)]]
+  fit_range_hazard <- ranges[[paste0("fit_range_hazard_", from_digit, to_digit)]]
+  fit_range_cumu_hazard <- ranges[[paste0("fit_range_cumu_hazard_", from_digit, to_digit)]]
 
   if(time_scale == "age") {
     time <- "tend"
@@ -1288,7 +1320,7 @@ create_3d_plots <- function(ped_new, model, trans, time_scale, age_onset_slices,
     p_contour_cumu <- ggplot(ped_new_trans, aes(x = !!as.symbol(time), y = age_onset, z = cumu_hazard)) +
       geom_tile(aes(fill = cumu_hazard)) +
       stat_contour(aes(z = cumu_hazard), colour = "grey30", bins = 6) +
-      scale_fill_viridis_c(name = "Cumulative Hazard", option = "viridis", limits = c(0, max(ped_new_trans$cumu_hazard, na.rm = TRUE))) +
+      scale_fill_viridis_c(name = "Cumulative Hazard", option = "viridis", limits = fit_range_cumu_hazard) +
       labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset")
 
     p_contour_tp <- ggplot(ped_new_trans, aes(x = !!as.symbol(time), y = age_onset, z = trans_prob)) +
@@ -1334,29 +1366,33 @@ create_3d_plots <- function(ped_new, model, trans, time_scale, age_onset_slices,
       geom_tile(aes(fill = loghazard)) +
       stat_contour(aes(z = loghazard), colour = "grey30", bins = 6) +
       scale_fill_viridis_c(name = "Log-hazard", option = "viridis", limits = fit_range_loghazard) +
-      facet_wrap(~ age_onset, ncol = 2) +
-      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset")
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
+      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_contour_hazard <- ggplot(contour_df, aes(x = !!as.symbol(time), y = age_progression, z = hazard)) +
       geom_tile(aes(fill = hazard)) +
       stat_contour(aes(z = hazard), colour = "grey30", bins = 6) +
       scale_fill_viridis_c(name = "Hazard", option = "viridis", limits = fit_range_hazard) +
-      facet_wrap(~ age_onset, ncol = 2) +
-      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset")
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
+      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_contour_cumu <- ggplot(contour_df, aes(x = !!as.symbol(time), y = age_progression, z = cumu_hazard)) +
       geom_tile(aes(fill = cumu_hazard)) +
       stat_contour(aes(z = cumu_hazard), colour = "grey30", bins = 6) +
-      scale_fill_viridis_c(name = "Cumulative Hazard", option = "viridis", limits = c(0, max(ped_new_trans$cumu_hazard, na.rm = TRUE))) +
-      facet_wrap(~ age_onset, ncol = 2) +
-      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset")
+      scale_fill_viridis_c(name = "Cumulative Hazard", option = "viridis", limits = fit_range_cumu_hazard) +
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
+      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_contour_tp <- ggplot(contour_df, aes(x = !!as.symbol(time), y = age_progression, z = trans_prob)) +
       geom_tile(aes(fill = trans_prob)) +
       stat_contour(aes(z = trans_prob), colour = "grey30", bins = 6) +
       scale_fill_viridis_c(name   = "Transition\nProbability", option = "viridis", limits = c(0,1)) +
-      facet_wrap(~ age_onset, ncol = 2) +
-      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset")
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
+      labs(title = paste("Transition", trans), x = xlab, y = "Age at CKD onset") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     # slice plots
     slices <- expand.grid(
@@ -1376,34 +1412,38 @@ create_3d_plots <- function(ped_new, model, trans, time_scale, age_onset_slices,
       geom_ribbon(aes(ymin = loghazard_lower, ymax = loghazard_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
       scale_colour_viridis_d(name = "Time until progression") +
-      facet_wrap(~ age_onset, ncol = 2) +
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
       theme(legend.position = "bottom", legend.box = "horizontal") +
-      labs(title = paste("Transition", trans), x = xlab, y = "Log-hazard")
+      labs(title = paste("Transition", trans), x = xlab, y = "Log-hazard") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_slice_hazard <- ggplot(slice_df, aes(x = !!sym(time), y = hazard, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
       geom_ribbon(aes(ymin = hazard_lower, ymax = hazard_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
       scale_colour_viridis_d(name = "Time until progression") +
-      facet_wrap(~ age_onset, ncol = 2) +
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
       theme(legend.position = "bottom", legend.box = "horizontal") +
-      labs(title = paste("Transition", trans), x = xlab, y = "Hazard")
+      labs(title = paste("Transition", trans), x = xlab, y = "Hazard") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_slice_cumu <- ggplot(slice_df, aes(x = !!sym(time), y = cumu_hazard, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
       geom_ribbon(aes(ymin = cumu_lower, ymax = cumu_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
       scale_colour_viridis_d(name = "Time until progression") +
-      facet_wrap(~ age_onset, ncol = 2) +
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
       theme(legend.position = "bottom", legend.box = "horizontal") +
-      labs(title = paste("Transition", trans), x = xlab, y = "Cumulative Hazard")
+      labs(title = paste("Transition", trans), x = xlab, y = "Cumulative Hazard") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
     p_slice_tp <- ggplot(slice_df, aes(x = !!sym(time), y = trans_prob * 100, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
       geom_ribbon(aes(ymin = trans_lower * 100, ymax = trans_upper * 100), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
       scale_colour_viridis_d(name = "Time until progression") +
       scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20), labels = function(x) paste0(x, "%")) +
-      facet_wrap(~ age_onset, ncol = 2) +
+      facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
       theme(legend.position = "bottom", legend.box = "horizontal") +
-      labs(title = paste("Transition", trans), x = xlab, y = "Transition probability (%)")
+      labs(title = paste("Transition", trans), x = xlab, y = "Transition probability (%)") +
+      theme(panel.spacing = unit(1.5, "lines"))
 
   }
 
@@ -1437,4 +1477,136 @@ create_3d_plots <- function(ped_new, model, trans, time_scale, age_onset_slices,
 
   return(out)
 
+}
+
+extract_risk_factor_effects <- function(model, term_main) {
+
+  su <- summary(model)
+  vc <- vcov(model)
+  all_coef_names <- names(su$p.coeff)
+
+  if (!term_main %in% all_coef_names) {
+    stop(paste("Main term '", term_main, "' not found in model coefficients.",
+               "\nPlease check your model formula and the spelling of the term."))
+  }
+
+  coef_main <- su$p.coeff[term_main]
+  se_main   <- su$se[term_main]
+  p_main    <- su$p.pv[term_main]
+
+  get_interaction_effect <- function(transition_level) {
+    possible_names <- all_coef_names[
+      grepl(term_main, all_coef_names, fixed = TRUE) &
+      grepl(transition_level, all_coef_names, fixed = TRUE)
+    ]
+    term_int <- setdiff(possible_names, term_main)
+
+    if (length(term_int) == 0) {
+      warning(paste(
+        "Interaction term for '", term_main, "' and transition '", transition_level,
+        "' not found. Returning NA. Check your model formula."
+      ))
+      return(c(coef = NA, se = NA, p = NA))
+    }
+    if (length(term_int) > 1) {
+       warning(paste(
+         "Multiple possible interaction terms found for '", term_main,
+         "' and transition '", transition_level, "'. Using the first one:", term_int[1]
+       ))
+    }
+    term_int <- term_int[1]
+
+    coef_combined <- coef_main + su$p.coeff[term_int]
+    se_combined   <- sqrt(se_main^2 + su$se[term_int]^2 + 2 * vc[term_main, term_int])
+    p_combined    <- 2 * pnorm(abs(coef_combined / se_combined), lower.tail = FALSE)
+
+    return(c(coef = coef_combined, se = se_combined, p = p_combined))
+  }
+
+  effects_12 <- get_interaction_effect("1->2")
+  effects_23 <- get_interaction_effect("2->3")
+
+  tibble(
+    term = c("0->1", "1->2", "2->3"),
+    coef = c(coef_main, effects_12[1], effects_23[1]),
+    se   = c(se_main,   effects_12[2], effects_23[2]),
+    p    = c(p_main,    effects_12[3], effects_23[3])
+  )
+}
+
+
+convert_to_latex_risk_factors <- function(final_table) {
+
+  table_out <- final_table %>%
+    dplyr::filter(Effect %in% c("G", "1→2", "2→3")) %>%
+    dplyr::mutate(
+      Coef = sprintf("%.3f", as.numeric(Coef)),
+      SE = sprintf("%.3f", as.numeric(SE)),
+      p_value = dplyr::if_else(round(as.numeric(p_value), 3) == 0, "$<$0.001", sprintf("%.3f", as.numeric(p_value))),
+      Scenario = dplyr::case_when(
+        grepl("BMI \\+ uACR \\+ Smoking \\+ eGFR", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR + Smoking + eGFR}",
+        grepl("BMI \\+ uACR \\+ Smoking", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR + Smoking}",
+        grepl("BMI \\+ uACR", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR}",
+        grepl("G \\+ PGS \\+ Diabetes", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes}",
+        TRUE ~ Scenario
+      ),
+      Effect = dplyr::recode(Effect, "G" = "0→1")
+    ) %>%
+    dplyr::rename(
+      `Risk Factors` = Scenario,
+      Transition = Effect,
+      Coefficient = Coef,
+      `P-value` = p_value
+    ) %>%
+    dplyr::select(`Risk Factors`, Transition, Coefficient, SE, `P-value`)
+
+  header <- c(
+    "\\begin{table}[!h]",
+    "\\caption{\\captionukbmodelsriskfactors}",
+    "\\label{tab:ukb-models-risk-factors}",
+    "\\centering",
+    "\\begin{tabular}[t]{lcrrr}",
+    "\\toprule",
+    "Risk Factors & Transition & Coefficient & SE & P-value\\\\"
+  )
+
+  body_lines <- c()
+  for (i in seq(1, nrow(table_out), by = 3)) {
+    is_shaded_block <- (ceiling(i / 3) %% 2 != 0)
+    color_prefix <- if (is_shaded_block) "\\rowcolor{gray!10} " else ""
+    risk_factor_text <- table_out$`Risk Factors`[i]
+
+    other_cells_r1 <- paste(table_out[i, 2:ncol(table_out)], collapse = " & ")
+    body_lines <- c(body_lines, paste0(color_prefix, " & ", other_cells_r1))
+
+    other_cells_r2 <- paste(table_out[i + 1, 2:ncol(table_out)], collapse = " & ")
+    body_lines <- c(body_lines, paste0(color_prefix, " & ", other_cells_r2))
+
+    if (is_shaded_block) {
+      multirow_cell <- paste0("\\multirow{-3}{*}{\\cellcolor{gray!10}", risk_factor_text, "}")
+    } else {
+      multirow_cell <- paste0("\\multirow{-3}{*}{", risk_factor_text, "}")
+    }
+    other_cells_r3 <- paste(table_out[i + 2, 2:ncol(table_out)], collapse = " & ")
+    body_lines <- c(body_lines, paste0(color_prefix, multirow_cell, " & ", other_cells_r3))
+  }
+
+  body <- paste(body_lines, collapse = " \\\\\n")
+  body <- paste0(body, " \\\\")
+
+  footer <- c(
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\parbox{\\linewidth}{\\footnotesize",
+    "\\begin{itemize}[leftmargin=*, noitemsep, label=\\textcolor{white}{\\textbullet}]",
+    " \\item G: Genetic variant rs77924615.",
+    " \\item 0: Healthy; 1: CKD; 2: Severe CKD; 3: ESKD.",
+    "\\end{itemize}",
+    "}",
+    "\\end{table}"
+  )
+
+  final_latex_code <- paste(c(header, "\\midrule", body, footer), collapse = "\n")
+
+  return(final_latex_code)
 }
