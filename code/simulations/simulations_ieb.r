@@ -14,7 +14,7 @@ registry <- "results/simulations/registries/sim-ieb-registry"
 dir_datasets <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/datasets/"
 dir_figures <- "/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/figures/ieb/"
 repls <- 500
-ncores <- 240
+ncores <- 200
 seed <- 11022022
 
 # simulation parameters ----
@@ -147,25 +147,46 @@ prob_df_dist <- expand.grid(
   stringsAsFactors = FALSE
 )
 
+# betas <- list(
+#   moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+#                beta_0_12 = -3.4, beta_0_13 = -3.4,
+#                beta_1_01 = 0.2, beta_1_03 = 0.0,
+#                beta_1_12 = 0.2, beta_1_13 = 0.0,
+#                beta_2_01 = 0.2, beta_2_03 = 0.0,
+#                beta_2_12 = 0.2, beta_2_13 = 0.0),
+#   strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+#                beta_0_12 = -3.4, beta_0_13 = -3.4,
+#                beta_1_01 = 0.4, beta_1_03 = 0.0,
+#                beta_1_12 = 0.4, beta_1_13 = 0.0,
+#                beta_2_01 = 0.4, beta_2_03 = 0.0,
+#                beta_2_12 = 0.4, beta_2_13 = 0.0),
+#   extreme  = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+#                beta_0_12 = -4.4, beta_0_13 = -3.4,
+#                beta_1_01 = 0.6, beta_1_03 = 0.0,
+#                beta_1_12 = 0.6, beta_1_13 = 0.0,
+#                beta_2_01 = 0.6, beta_2_03 = 0.0,
+#                beta_2_12 = 0.6, beta_2_13 = 0.0)
+# )
+
 betas <- list(
-  moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+  zero_five = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -3.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.2, beta_1_03 = 0.0,
-               beta_1_12 = 0.2, beta_1_13 = 0.0,
-               beta_2_01 = 0.2, beta_2_03 = 0.0,
-               beta_2_12 = 0.2, beta_2_13 = 0.0),
-  strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_1_01 = 0.5, beta_1_03 = 0.0,
+               beta_1_12 = 0.5, beta_1_13 = 0.0,
+               beta_2_01 = 0.5, beta_2_03 = 0.0,
+               beta_2_12 = 0.5, beta_2_13 = 0.0),
+  zero_eight = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -3.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.4, beta_1_03 = 0.0,
-               beta_1_12 = 0.4, beta_1_13 = 0.0,
-               beta_2_01 = 0.4, beta_2_03 = 0.0,
-               beta_2_12 = 0.4, beta_2_13 = 0.0),
-  extreme  = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
+               beta_1_01 = 0.8, beta_1_03 = 0.0,
+               beta_1_12 = 0.8, beta_1_13 = 0.0,
+               beta_2_01 = 0.8, beta_2_03 = 0.0,
+               beta_2_12 = 0.8, beta_2_13 = 0.0),
+  one_zero  = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -4.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.6, beta_1_03 = 0.0,
-               beta_1_12 = 0.6, beta_1_13 = 0.0,
-               beta_2_01 = 0.6, beta_2_03 = 0.0,
-               beta_2_12 = 0.6, beta_2_13 = 0.0)
+               beta_1_01 = 1.0, beta_1_03 = 0.0,
+               beta_1_12 = 1.0, beta_1_13 = 0.0,
+               beta_2_01 = 1.0, beta_2_03 = 0.0,
+               beta_2_12 = 1.0, beta_2_13 = 0.0)
 )
 
 ## model formulas ----
@@ -378,13 +399,16 @@ if (!test_directory_exists(registry)) {
     repls = repls)
 
   start_time <- Sys.time()
+  message("Starting job submission at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
   submitJobs(ids = findNotDone())
   waitForJobs() # sometimes necessary to wait for jobs to finish and not be wrongly included in findNotDone()
   end_time <- Sys.time()
+  message("All jobs completed at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
   message("Total time taken for job submission and completion: ", round(difftime(end_time, start_time, units = "mins"), 2), " minutes")
 }
 
 # adjusting registry ----
+reg     <- loadRegistry(registry, writeable = TRUE)
 ids_all <- findJobs(reg = reg)
 pars <- as.data.table( getJobPars(ids = ids_all, reg = reg) )
 badJobs <- pars[

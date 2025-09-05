@@ -8,7 +8,6 @@ library(kmi)
 library(mgcv)
 library(scales)
 library(nnet)
-library(kableExtra)
 
 # setup ----
 setwd("wis37138") # only necessary to enable plotting because I have no write permissions in "/"
@@ -90,14 +89,20 @@ extra_terms_list <- list(
     "pgs_cross_594_umod * transition",
     "diabetes * transition"),
 
-  # 4th iteration: add s(sc_BMI, by = transition) + s(sc_UACR, by = transition)
+  # 4th iteration: add s(sc_BMI, by = transition)
+  c("rs77924615_A_G * transition",
+    "pgs_cross_594_umod * transition",
+    "diabetes * transition",
+    "s(sc_BMI, bs = 'ps', k = 20, by = transition)"),
+
+  # 5th iteration: add s(sc_UACR, by = transition)
   c("rs77924615_A_G * transition",
     "pgs_cross_594_umod * transition",
     "diabetes * transition",
     "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
     "s(sc_UACR, bs = 'ps', k = 20, by = transition)"),
 
-  # 5th iteration: add smoking × transition
+  # 6th iteration: add smoking × transition
   c("rs77924615_A_G * transition",
     "pgs_cross_594_umod * transition",
     "diabetes * transition",
@@ -105,7 +110,7 @@ extra_terms_list <- list(
     "s(sc_UACR, bs = 'ps', k = 20, by = transition)",
     "smoking * transition"),
 
-  # 6th iteration: add s(eGFRcrea, by = transition)
+  # 7th iteration: add s(eGFRcrea, by = transition)
   c("rs77924615_A_G * transition",
     "pgs_cross_594_umod * transition",
     "diabetes * transition",
@@ -121,13 +126,14 @@ scenario_names <- c(
   "G only",
   "G + PGS",
   "G + PGS + Diabetes",
+  "G + PGS + Diabetes + BMI",
   "G + PGS + Diabetes + BMI + uACR",
   "G + PGS + Diabetes + BMI + uACR + Smoking",
   "G + PGS + Diabetes + BMI + uACR + Smoking + eGFR"
 )
 
 # 5) Loop over each scenario using foreach
-num_cores <- 6
+num_cores <- 7
 registerDoParallel(cores = num_cores)
 
 # The 'results' object will be created by the output of the foreach loop
@@ -256,6 +262,12 @@ final_table <- read.xlsx(file.path(dir_out, "genetics_model_results_originalCuto
 latex_risk_factors <- convert_to_latex_risk_factors(final_table)
 writeLines(latex_risk_factors, file.path(dir_out, "tables", "ukb-models-risk-factors.tex"))
 
+# risk factor distribution table ----
+
+risk_factor_distributions <- create_summary_for_latex(events_ps)
+latex_risk_factor_distributions <- convert_to_latex_risk_factor_distributions(risk_factor_distributions)
+writeLines(latex_risk_factor_distributions, file.path(dir_out, "tables", "ukb-risk-factor-distributions.tex"))
+
 # adjustment versus weighting table ----
 
 ped_events_with_weights <- ped_events %>%
@@ -363,11 +375,15 @@ out <- results %>%
   )
 
 write.csv2(out, file = file.path(dir_out, "weighting_and_adjusting_models_results_msm.csv"), row.names = FALSE)
+out <- read.csv2(file = file.path(dir_out, "weighting_and_adjusting_models_results_msm.csv"))
 
 latex_table <- kable(out, "latex", booktabs = TRUE, escape = FALSE,
-      caption = "\\caption{\\captionukbadjustmentweighting}",
-      label = "tab:ukb-adjustment-weighting",
-      align = "cccrrr") %>%
-  kable_styling(latex_options = c("striped", "hold_position"))
+      caption = "\\captionukbmodelsriskfactors",
+      label = "ukb-models-risk-factors",
+      align = "cccrrr",
+      position = "!ht") %>%
+  kable_styling(latex_options = "striped")
 
+# output file requires manual adjustment of caption + label
 writeLines(latex_table, file.path(dir_out, "tables", "ukb-adjustment-weighting.tex"))
+

@@ -243,7 +243,7 @@ writeLines(cumu_latex, file.path(dir_tables, "ic-bh-coverage-cumu.tex"))
 ## load ----
 analysis_name <- "fe"
 registry_fe <- paste0("results/simulations/registries/sim-ic-registry_", analysis_name)
-reg_fe     <- loadRegistry(registry, writeable = TRUE)
+reg_fe     <- loadRegistry(registry_fe, writeable = TRUE)
 file_dataset_fe <- paste0("/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/datasets/sim-ic-results_", analysis_name, ".rds")
 res <- readRDS(file_dataset_fe)
 dir_figures_fe <- file.path("/nvmetmp/wis37138/msm-timeScales-ieb-ic-ckd/results/simulations/figures/ic/", analysis_name)

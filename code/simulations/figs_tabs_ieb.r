@@ -20,14 +20,18 @@ res_cor <- readRDS(paste0(dir_datasets, "sim-ieb-results_cor.rds"))
 
 # plots ----
 problem_labs <- c(sim_stratified = "SSTS DGP", sim_timeScales = "MTS DGP")
-
+font_size <- 24
 distinct_dist_x1_x2 <- unique(res_cor$dist_x1_x2)
 
 ## correlation boxplots ----
 
 df <- res_cor
-df %>% pull(rho) %>% summary()
+df %>% filter(beta_scenario %in% c("moderate", "strong", "extreme")) %>% pull(rho) %>% summary()
 scns <- unique(df$beta_scenario)
+y_limits_cor <- c(-0.16, 0.10)
+y_breaks_cor <- seq(-0.15, 0.10, by = 0.05)
+# y_limits_cor <- c(-0.24, 0.06)
+# y_breaks_cor <- seq(-0.25, 0.05, by = 0.05)
 
 for (dist in distinct_dist_x1_x2) {
   for (scn in scns) {
@@ -35,7 +39,7 @@ for (dist in distinct_dist_x1_x2) {
       filter(dist_x1_x2    == dist,
              beta_scenario == scn)
 
-    p_cor <- plot_cor(df_filtered)
+    p_cor <- plot_cor(df_filtered, y_limits = y_limits_cor, y_breaks = y_breaks_cor)
 
     ggsave(
       filename = file.path(
@@ -57,9 +61,48 @@ for (dist in distinct_dist_x1_x2) {
 ## coefficient and coverage boxplots ----
 
 df   <- res_msm
-df %>% filter(transition != "progression_int") %>% pull(coefficient) %>% summary()
+### for text
+df %>%
+  filter(
+    dist_x1_x2    == "normal1_normal1",
+    beta_scenario == "extreme",
+    transition == "onset",
+    formula_name %in% c("stratified_ieb"),
+    problem == "sim_timeScales"
+  ) %>%
+  pull(coefficient) %>%
+  summary()
+
+df %>%
+  filter(
+    dist_x1_x2    == "normal1_normal1",
+    beta_scenario == "extreme",
+    transition == "progression_int",
+    formula_name %in% c("stratified_ieb"),
+    problem == "sim_timeScales"
+  ) %>%
+  pull(coefficient) %>%
+  summary()
+
+df %>%
+  filter(
+    dist_x1_x2    == "normal1_normal1",
+    beta_scenario == "extreme",
+    transition == "progression",
+    formula_name %in% c("stratified_ieb"),
+    problem == "sim_timeScales"
+  ) %>%
+  pull(coefficient) %>%
+  summary()
+###
+df %>% filter(beta_scenario == "zero_eight") %>% filter(transition != "progression_int") %>% pull(coefficient) %>% summary()
 df %>% filter(transition == "progression_int") %>% pull(coefficient) %>% summary()
 scns <- unique(df$beta_scenario)
+
+# y_limits_coef <- list(c(-0.12, 1.0), NULL)
+# y_breaks_coef <- list(seq(0.0, 1.0, by = 0.2), NULL)
+# y_limits_coef <- list(c(0.32, 1.14), NULL)
+# y_breaks_coef <- list(seq(0.4, 1.2, by = 0.2), NULL)
 
 for(dist in distinct_dist_x1_x2) {
   for(scn in scns) {
@@ -69,7 +112,7 @@ for(dist in distinct_dist_x1_x2) {
              beta_scenario == scn)
 
     # 1) coefficient boxplot
-    p1 <- plot_coefs(df_sub)
+    p1 <- plot_coefs(df_sub, y_limits = y_limits_coef, y_breaks = y_breaks_coef)
     ggsave(
       filename = file.path(
         dir_figures,
@@ -100,15 +143,22 @@ for(dist in distinct_dist_x1_x2) {
 
 ### correlation facet boxplot ----
 
+y_limits_cor <- c(-0.16, 0.10)
+y_breaks_cor <- seq(-0.15, 0.10, by = 0.05)
+
 # 1. Filter data for the LEFT plot
 df_left <- res_cor %>%
-  filter(dist_x1_x2    == "bernoulli0.5_bernoulli0.5",
-         beta_scenario == "moderate")
+  filter(
+    # dist_x1_x2    == "bernoulli0.5_bernoulli0.5",
+    dist_x1_x2    == "normal1_normal1",
+    beta_scenario == "moderate")
 
 # 2. Create the LEFT plot and add the plotmath title
-p_left <- plot_cor(df_left, font_size = 20) +
-  labs(title = expression(atop("Moderate Effect Sizes",
-                               x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)")))
+p_left <- plot_cor(df_left, font_size = font_size, y_limits = y_limits_cor, y_breaks = y_breaks_cor) +
+  # labs(title = expression(atop("Small Effect Sizes",
+  #                              x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)")))
+  labs(title = expression(atop("Small Effect Sizes",
+                               x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)")))
 
 # 3. Filter data for the RIGHT plot
 df_right <- res_cor %>%
@@ -116,8 +166,8 @@ df_right <- res_cor %>%
          beta_scenario == "extreme")
 
 # 4. Create the RIGHT plot and add the plotmath title
-p_right <- plot_cor(df_right, font_size = 20) +
-  labs(title = expression(atop("Very Strong Effect Sizes",
+p_right <- plot_cor(df_right, font_size = font_size, y_limits = y_limits_cor, y_breaks = y_breaks_cor) +
+  labs(title = expression(atop("Large Effect Sizes",
                                x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))) +
   # Remove y-axis title, text, and ticks from the right plot
   theme(
@@ -136,36 +186,43 @@ combined_plot <-
 
   # Add patchwork layout options
   plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+  theme(
+    legend.position = "bottom",
+    axis.title.x = element_blank())
 
 ggsave(
-  filename = file.path(dir_figures, "ieb_cor.png"),
+  filename = file.path(dir_figures, "ieb_cor_n1_n1.png"),
   plot   = combined_plot, width = 12, height = 6, dpi = 300
 )
 
 ### coefficient facet boxplot ----
 
+y_limits_coef <- list(c(-0.2, 0.9), c(-0.4, 0.4))
+y_breaks_coef <- list(seq(-0.2, 0.8, by = 0.2), seq(-0.4, 0.4, by = 0.2))
+drop_int <- T
+
 # 1. Get the LISTS of plots from your function
 # This returns a list of 2 ggplot objects for each call
 df_left <- res_msm %>%
-  filter(dist_x1_x2    == "bernoulli0.5_bernoulli0.5",
+  filter(
+    # dist_x1_x2    == "bernoulli0.5_bernoulli0.5",
+    dist_x1_x2    == "normal1_normal1",
          beta_scenario == "moderate")
 
 df_right <- res_msm %>%
   filter(dist_x1_x2    == "normal1_normal1",
-         beta_scenario == "strong")
+         beta_scenario == "extreme")
 
-p_list_left <- plot_coefs(df_left, font_size = 20)
-p_list_right <- plot_coefs(df_right, font_size = 20)
-
-ggsave("test.png", p_list_left[[1]], width = 8, height = 8, dpi = 300)
+p_list_left <- plot_coefs(df_left, font_size = font_size, y_limits = y_limits_coef, y_breaks = y_breaks_coef, drop_int = drop_int)
+p_list_right <- plot_coefs(df_right, font_size = font_size, y_limits = y_limits_coef, y_breaks = y_breaks_coef, drop_int = drop_int)
 
 # 2. Add overall titles as separate "plots"
-title_left_text <- expression(atop("Moderate Effect Sizes", x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)"))
+# title_left_text <- expression(atop("Small Effect Sizes", x[1] ~ " ~ Ber(0.5) & " ~ x[2] ~ " ~ Ber(0.5)"))
+title_left_text <- expression(atop("Small Effect Sizes", x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))
 title_left <- ggplot() + labs(title = title_left_text) + theme_void() +
               theme(plot.title = element_text(hjust = 0.5, size = 22))
 
-title_right_text <- expression(atop("Very Strong Effect Sizes", x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))
+title_right_text <- expression(atop("Large Effect Sizes", x[1] ~ " ~ N(0,1) & " ~ x[2] ~ " ~ N(0,1)"))
 title_right <- ggplot() + labs(title = title_right_text) + theme_void() +
                theme(plot.title = element_text(hjust = 0.5, size = 22))
 
@@ -178,29 +235,57 @@ p_list_right <- lapply(p_list_right, function(p) {
   )
 })
 
-# 4. Assemble the final layout from all the individual pieces
-# This layout explicitly defines every component's position.
-layout <- "
-  A#B
-  C#D
-  E#F
-"
+if(drop_int) {
+  layout <- "
+    A#B
+    C#D
+    E#F
+  "
 
-combined_plot <- title_left + title_right +
-                 p_list_left[[1]] + p_list_right[[1]] +
-                 p_list_left[[2]] + p_list_right[[2]] +
-  plot_layout(
-    design = layout,
-    guides = "collect",
-    # Heights corresponds to the 3 rows in the design
-    heights = unit(c(0.1, 5, 5), c('cm', 'null', 'null')),
-    # Widths now corresponds to the 3 columns: [Plots | Spacer | Plots]
-    # To move panels closer, make the middle number smaller.
-    widths = unit(c(1, 0.1, 1), c('null', 'cm', 'null'))
-  ) &
-  theme(legend.position = "bottom")
+  combined_plot <- title_left + title_right +
+                  p_list_left[[1]] + p_list_right[[1]] +
+                  p_list_left[[2]] + p_list_right[[2]] +
+    plot_layout(
+      design = layout,
+      guides = "collect",
+      # Heights corresponds to the 3 rows in the design
+      heights = unit(c(0.1, 5, 5), c('cm', 'null', 'null')),
+      # Widths now corresponds to the 3 columns: [Plots | Spacer | Plots]
+      # To move panels closer, make the middle number smaller.
+      widths = unit(c(1, 0.1, 1), c('null', 'cm', 'null'))
+    ) &
+    theme(legend.position = "bottom")
 
-png(file.path(dir_figures, "coefficients", "ieb_coef.png"), width = 18, height = 10, units = "in", res = 300)
+  plot_name <- "ieb_coef_n1_n1_noInt.png"
+
+} else {
+  layout <- "
+    A#B
+    C#D
+    E#F
+    G#H
+  "
+
+  combined_plot <- title_left + title_right +
+                  p_list_left[[1]] + p_list_right[[1]] + # Onset plots
+                  p_list_left[[3]] + p_list_right[[3]] + # Progression plots
+                  p_list_left[[2]] + p_list_right[[2]] + # Progression Interaction plots
+    plot_layout(
+      design = layout,
+      guides = "collect",
+      # CHANGE 3: Provide a height for the new 4th row.
+      # The heights vector must have the same number of elements as there are rows in the design.
+      heights = unit(c(0.1, 5, 5, 5), c('cm', 'null', 'null', 'null')),
+      # Widths now corresponds to the 3 columns: [Plots | Spacer | Plots]
+      # To move panels closer, make the middle number smaller.
+      widths = unit(c(1, 0.1, 1), c('null', 'cm', 'null'))
+    ) &
+    theme(legend.position = "bottom")
+
+  plot_name <- "ieb_coef_n1_n1_withInt.png"
+}
+
+png(file.path(dir_figures, plot_name), width = 17, height = 12, units = "in", res = 300)
 print(combined_plot)
 dev.off()
 
@@ -212,8 +297,8 @@ dev.off()
 betas <- list(
   moderate = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
                beta_0_12 = -3.4, beta_0_13 = -3.4,
-               beta_1_01 = 0.2, beta_1_03 = 0.1,
-               beta_1_12 = 0.2, beta_1_13 = 0.1,
+               beta_1_01 = 0.2, beta_1_03 = 0.0,
+               beta_1_12 = 0.2, beta_1_13 = 0.0,
                beta_2_01 = 0.2, beta_2_03 = 0.0,
                beta_2_12 = 0.2, beta_2_13 = 0.0),
   strong   = c(beta_0_01 = -3.9, beta_0_03 = -4.0,
@@ -230,7 +315,7 @@ betas <- list(
                beta_2_12 = 0.6, beta_2_13 = 0.0)
 )
 
-latex_effect_sizes <- convert_to_latex_effect_sizes(betas)
+latex_effect_sizes <- convert_to_latex_effect_sizes(betas, size_names = c("Small", "Medium", "Large"))
 writeLines(latex_effect_sizes, file.path(dir_tables, "ieb-effect-sizes.tex"))
 
 ## correlation ----
@@ -241,6 +326,12 @@ cor_summary <- res_cor %>%
     rho_ci = list(round(quantile(rho, probs = c(0.025, 0.975)), 4))
     ) %>%
     mutate(
+      beta_scenario = factor(case_when(
+        beta_scenario == "moderate" ~ "Small",
+        beta_scenario == "strong"   ~ "Medium",
+        beta_scenario == "extreme"  ~ "Large",
+        TRUE ~ as.character(beta_scenario)
+      ), levels = c("Small", "Medium", "Large")),
       rho_lower = map_dbl(rho_ci, ~ .[1]),
       rho_upper = map_dbl(rho_ci, ~ .[2]),
       rho_ci = map_chr(rho_ci, ~ paste0("(", .[1], ", ", .[2], ")")))
@@ -250,8 +341,17 @@ latex_cor <- convert_to_latex_cor(processed_df_cor, colsep = "2pt")
 writeLines(latex_cor, file.path(dir_tables, "ieb_cor.tex"))
 
 ## bias ----
-ieb_coef_bias_cov_summary <- create_csv_summary(res_msm)
+ieb_coef_bias_cov_summary <- res_msm %>%
+  mutate(
+    beta_scenario = factor(case_when(
+      beta_scenario == "moderate" ~ "Small",
+      beta_scenario == "strong"   ~ "Medium",
+      beta_scenario == "extreme"  ~ "Large",
+      TRUE ~ as.character(beta_scenario)
+    ), levels = c("Small", "Medium", "Large"))
+  ) %>%
+  create_csv_summary()
+
 View(ieb_coef_bias_cov_summary)
 
-# CHECK!!!
 write.csv(ieb_coef_bias_cov_summary, file.path(dir_tables, "ieb_coef_bias_cov_summary.csv"), row.names = FALSE)

@@ -493,3 +493,44 @@ saveRDS(events_ct_anon, file.path(dir_out, file_events_anon_out))
 
 a <- readRDS(file.path(dir_out, file_ped_events_anon_out))
 b <- readRDS(file.path(dir_out, file_events_anon_out))
+
+
+# compute interval length per state ----
+library(dplyr)
+library(lubridate)
+
+
+pheno <- pheno %>%
+  mutate(date_at_exam = as.Date(date_at_exam))
+
+
+avg_gap_years <- function(df) {
+  df %>%
+    arrange(id, date_at_exam) %>%
+    group_by(id) %>%
+    mutate(gap_days = as.numeric(difftime(lead(date_at_exam), date_at_exam, units = "days"))) %>%
+    summarise(id_avg_years = mean(gap_days / 365.25, na.rm = TRUE), .groups = "drop") %>%
+    filter(!is.nan(id_avg_years)) %>%
+    summarise(mean_years = mean(id_avg_years),
+              n_ids = n())
+}
+
+res_00 <- pheno %>%
+  filter(flag1 == 0, flag2 == 0) %>%
+  avg_gap_years() %>%
+  mutate(scenario = "flag1=0 & flag2=0")
+
+res_10 <- pheno %>%
+  filter(flag1 == 1, flag2 == 0) %>%
+  avg_gap_years() %>%
+  mutate(scenario = "flag1=1 & flag2=0")
+
+res_01plus <- pheno %>%
+  filter(flag2 == 1) %>%
+  avg_gap_years() %>%
+  mutate(scenario = "flag2=1")
+
+summary_gaps <- bind_rows(res_00, res_10, res_01plus) %>%
+  select(scenario, mean_years, n_ids)
+
+summary_gaps

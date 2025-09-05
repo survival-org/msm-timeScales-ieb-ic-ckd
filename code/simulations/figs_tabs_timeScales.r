@@ -304,7 +304,7 @@ problem_labs <- c(sim_timeScales_fe = "time-scales DGP",
 #   )
 # }
 
-p_boxplots <- plot_fixedEffects_boxplots(res_fe, algo_levels, bs_levels)
+p_boxplots <- plot_fixedEffects_boxplots(res_fe, algo_levels, bs_levels, font_size = 18)
 # ggsave(file.path(dir_figures, "fixedEffects_boxplots.png"), p_boxplots, width = 10, height = 8)
 png(file.path(dir_figures, "ts_fe_boxplots.png"), width = 10, height = 8, units = "in", res = 300)
 print(p_boxplots)

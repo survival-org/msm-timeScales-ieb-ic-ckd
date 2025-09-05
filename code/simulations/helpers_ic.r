@@ -1514,6 +1514,14 @@ plot_coverage_bh <- function(data,
         breaks = seq(0, 1, 0.2),
         labels = scales::percent_format(accuracy = 1)
       ) +
+      scale_colour_manual(
+        values = c(
+          "exact" = "#9b9b9b",
+          "adjustment" = "#21ae42",
+          "mid" = "#229ad1",
+          "end" = "purple"
+        )
+      ) +
       labs(title = NULL, x = NULL, y = "Coverage", colour = "Estimation Point") +
       theme_bw() +
       theme(
@@ -1584,7 +1592,8 @@ summarize_fe <- function(data, grouping_vars = NULL, rounding = 3) {
   return(res)
 }
 
-plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {  # new font_size arg
+
+plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {
   # 1) split into groups (or overall)
   groups <- if (!is.null(grouping_vars)) {
     split(data, data[grouping_vars], drop = TRUE)
@@ -1602,10 +1611,11 @@ plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {  # new fo
     ggplot(df, aes(x = factor(algorithm),
                    y = beta_est,
                    fill = ic_point)) +
-      geom_boxplot(position = position_dodge(width = 0.8)) +
       geom_hline(yintercept = true_val,
-                 color = "red",
-                 linetype = "dashed") +
+                 color = "darkorange",
+                 linewidth = 1.1,
+                 linetype = "solid") +
+      geom_boxplot(position = position_dodge(width = 0.8)) +
       labs(
         title = NULL,                  # removed title
         x     = NULL,                  # removed x-axis title
@@ -1615,6 +1625,14 @@ plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {  # new fo
       scale_y_continuous(
         breaks = seq(-2.0, -0.5, 0.5),    # fixed y-axis labels
         limits = c(-2.1, -0.45)           # fixed y-axis limits
+      ) +
+      scale_fill_manual(
+        values = c(
+          "exact" = "#9b9b9b",
+          "adjustment" = "#21ae42",
+          "mid" = "#229ad1",
+          "end" = "purple"
+        )
       ) +
       theme_bw() +
       theme(
@@ -1629,7 +1647,6 @@ plot_coef_fe <- function(data, grouping_vars = NULL, font_size = 14) {  # new fo
   names(plots) <- names(groups)
   plots
 }
-
 
 
 plot_coverage_fe <- function(data, grouping_vars = NULL) {
@@ -1829,7 +1846,7 @@ generate_multi_dgp_latex <- function(summary_df, coverage_type) {
   dgp_structure <- col_info %>%
     group_by(dgp) %>%
     summarise(n = n(), .groups = 'drop') %>%
-    mutate(dgp = factor(dgp, levels = c("Piecewise Exponential DGP", "Weibull DGP", "Interval Censoring DGP"))) %>%
+    mutate(dgp = factor(dgp, levels = c("Piecewise Exponential DGP", "Weibull DGP", "icenReg DGP"))) %>%
     arrange(dgp)
   multicolumn_items <- mapply(function(dgp, n) {
     paste0("\\multicolumn{", n, "}{c}{", dgp, "}")
@@ -1859,7 +1876,9 @@ generate_multi_dgp_latex <- function(summary_df, coverage_type) {
     label_line,
     "\\begin{sideways}",
     "\\footnotesize",
-    "\\setlength{\\tabcolsep}{4pt}",
+    # --- THIS IS THE MINIMAL CHANGE ---
+    "\\setlength{\\tabcolsep}{3pt}", # Changed from 4pt to 3pt
+    # ----------------------------------
     tabular_def, "\\toprule",
     multicolumn_line, cmidrule_line, paste0(mechanism_header_line, " \\\\"), "\\midrule"
   )

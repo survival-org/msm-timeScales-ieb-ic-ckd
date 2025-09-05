@@ -1522,7 +1522,7 @@ age_onset_slices  <- c(40, 50, 60, 70)
 prog_after_onset_slices <- c(2, 5, 10, 15)
 
 formulas <- list(
-  pam_stss = "ped_status ~
+  pam_ssts = "ped_status ~
     s(tend, bs = 'ps', k = 20, by = transition) +
     s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
     s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
@@ -1557,10 +1557,10 @@ foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% 
 }
 stopImplicitCluster()
 
-ped_new_stss <- readRDS(file.path(dir_data, "ped_pam_stss.rds"))
+ped_new_ssts <- readRDS(file.path(dir_data, "ped_pam_ssts.rds"))
 ped_new_mts  <- readRDS(file.path(dir_data, "ped_pam_mts.rds"))
 
-ranges <- extract_ranges(ped_new_stss, ped_new_mts, transitions = c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4"), scales = c("loghazard", "hazard", "cumu_hazard"))
+ranges <- extract_ranges(ped_new_ssts, ped_new_mts, transitions = c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4"), scales = c("loghazard", "hazard", "cumu_hazard"))
 
 num_cores   <- length(formulas)
 registerDoParallel(cores = num_cores)
@@ -1607,22 +1607,22 @@ foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% 
 stopImplicitCluster()
 
 ## null models ----
-### pam stss ----
-formula_stss <- "ped_status ~
+### pam ssts ----
+formula_ssts <- "ped_status ~
   s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition"
 
-pam_stss <- mgcv::bam(
-  formula = as.formula(formula_stss),
+pam_ssts <- mgcv::bam(
+  formula = as.formula(formula_ssts),
   data = ped_events,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-summary(pam_stss)
+summary(pam_ssts)
 
 ### pam mts ----
 formula_mts <- "ped_status ~
@@ -1643,28 +1643,28 @@ pam_mts <- mgcv::bam(
 
 summary(pam_mts)
 
-AIC(pam_stss, pam_mts)
-anova(pam_stss, pam_mts)
+AIC(pam_ssts, pam_mts)
+anova(pam_ssts, pam_mts)
 
 ## genetic models ----
 
-### pam stss ----
-formula_stss_genetics_naive <- "ped_status ~
+### pam ssts ----
+formula_ssts_genetics_naive <- "ped_status ~
   s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition +
   rs77924615_A_G*transition"
 
-pam_stss_genetics_naive <- mgcv::bam(
-  formula = as.formula(formula_stss_genetics_naive),
+pam_ssts_genetics_naive <- mgcv::bam(
+  formula = as.formula(formula_ssts_genetics_naive),
   data = ped_events,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-summary(pam_stss_genetics_naive)
+summary(pam_ssts_genetics_naive)
 
 ### pam mts ----
 formula_mts_genetics_naive <- "ped_status ~
@@ -2565,22 +2565,22 @@ ped_events_end <- readRDS(file.path(dir_data, file_ped_events_end)) %>%
   add_transVars()
 
 ## null models ----
-### pam stss ----
-formula_stss <- "ped_status ~
+### pam ssts ----
+formula_ssts <- "ped_status ~
   s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex*transition"
 
-pam_stss_end <- mgcv::bam(
-  formula = as.formula(formula_stss),
+pam_ssts_end <- mgcv::bam(
+  formula = as.formula(formula_ssts),
   data = ped_events_end,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-summary(pam_stss_end)
+summary(pam_ssts_end)
 
 ### pam mts ----
 formula_mts <- "ped_status ~
@@ -2601,11 +2601,11 @@ pam_mts_end <- mgcv::bam(
 
 summary(pam_mts_end)
 
-AIC(pam_stss, pam_mts, pam_stss_end, pam_mts_end)
-anova(pam_stss, pam_mts, pam_stss_end, pam_mts_end)
+AIC(pam_ssts, pam_mts, pam_ssts_end, pam_mts_end)
+anova(pam_ssts, pam_mts, pam_ssts_end, pam_mts_end)
 
-### comparison table of pam stss (mid) and pam stss (end) ----
-formula_stss_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
+### comparison table of pam ssts (mid) and pam ssts (end) ----
+formula_ssts_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
   sex * transition + rs77924615_A_G * transition +
@@ -2615,26 +2615,25 @@ formula_stss_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
   smoking * transition +
   s(eGFRcrea, bs = 'ps', k = 20, by = transition)"
 
-pam_stss_full <- mgcv::bam(
-  formula = as.formula(formula_stss_full),
+pam_ssts_full <- mgcv::bam(
+  formula = as.formula(formula_ssts_full),
   data = ped_events,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-pam_stss_full_end <- mgcv::bam(
-  formula = as.formula(formula_stss_full),
+pam_ssts_full_end <- mgcv::bam(
+  formula = as.formula(formula_ssts_full),
   data = ped_events_end,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-
 models <- list(
-  mid = pam_stss_full,
-  end = pam_stss_full_end
+  mid = pam_ssts_full,
+  end = pam_ssts_full_end
 )
 
 # Vector of the main effect term names for your risk factors

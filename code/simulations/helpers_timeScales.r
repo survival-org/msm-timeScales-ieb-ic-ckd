@@ -1136,12 +1136,12 @@ plot_fixedEffects_boxplots <- function(res_fe, algo_levels = c("algo_timeScales"
               "algo_stratified" = "SSTS PAM"),
 
     x_label = factor(
-    paste0(problem_label, " &\n", algo_label),
+    paste0(problem_label, "\n &\n", algo_label),
     levels = c(
-      "SSTS DGP &\nSSTS PAM",
-      "SSTS DGP &\nMTS PAM",
-      "MTS DGP &\nSSTS PAM",
-      "MTS DGP &\nMTS PAM"
+      "SSTS DGP\n &\nSSTS PAM",
+      "SSTS DGP\n &\nMTS PAM",
+      "MTS DGP\n &\nSSTS PAM",
+      "MTS DGP\n &\nMTS PAM"
     )
     ),
 
@@ -1163,20 +1163,19 @@ plot_fixedEffects_boxplots <- function(res_fe, algo_levels = c("algo_timeScales"
        fill = bs_label,
        color = algo_label
        )) +
-  geom_boxplot(outlier.shape = NA,
-         position = position_dodge(width = 0.85),
-         linewidth = 0.6) +
   geom_hline(data = truth_df,
          aes(yintercept = true_val),
          colour = "darkorange", linewidth = 1.1) +
-
+  geom_boxplot(outlier.shape = NA,
+         position = position_dodge(width = 0.85),
+         linewidth = 0.6) +
   scale_fill_manual(
     name = "Smooth Type",
-    values = c("Penalized Splines" = "#66C2A5", "Factor Smooth" = "#FC8D62")
+    values = c("Penalized Splines" = "#2c65cf", "Factor Smooth" = "darkgreen")
   ) +
   scale_color_manual(
     name = "Algorithm",
-    values = c("SSTS PAM" = "#A6A6A6", "MTS PAM" = "#4F4F4F"),
+    values = c("SSTS PAM" = "#A6A6A6", "MTS PAM" = "black"),
     breaks = c("SSTS PAM", "MTS PAM")
   ) +
 
