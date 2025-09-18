@@ -57,26 +57,27 @@ ped_baseline <- ped_events %>%
 events_ps <- readRDS(file.path(dir_data, file_events_ps))
 
 # fit models ----
-formula_stss_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
+formula_ssts_full <- "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-  sex * transition + rs77924615_A_G * transition +
-  pgs_cross_594_umod * transition + diabetes * transition +
-  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
-  s(sc_UACR, bs = 'ps', k = 20, by = transition) +
+  rs77924615_A_G * transition +
+  sex * transition +
+  s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition) +
+  diabetes * transition +
   smoking * transition +
-  s(eGFRcrea, bs = 'ps', k = 20, by = transition)"
+  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
+  s(sc_UACR, bs = 'ps', k = 20, by = transition)"
 
-pam_stss_full <- mgcv::bam(
-  formula = as.formula(formula_stss_full),
+pam_ssts_full <- mgcv::bam(
+  formula = as.formula(formula_ssts_full),
   data = ped_events,
   family = poisson(),
   offset = offset,
   method = "fREML",
   discrete = TRUE)
 
-pam_stss_full_end <- mgcv::bam(
-  formula = as.formula(formula_stss_full),
+pam_ssts_full_end <- mgcv::bam(
+  formula = as.formula(formula_ssts_full),
   data = ped_events_end,
   family = poisson(),
   offset = offset,
@@ -84,12 +85,12 @@ pam_stss_full_end <- mgcv::bam(
   discrete = TRUE)
 
 # define risk factors for table ----
-risk_factors <- c("rs77924615_A_G", "diabetes", "smoking")
+risk_factors <- c("rs77924615_A_G", "sexFemale", "diabetes0", "smoking")
 
 # create latex table ----
 models <- list(
-  mid = pam_stss_full,
-  end = pam_stss_full_end
+  mid = pam_ssts_full,
+  end = pam_ssts_full_end
 )
 
 results_long <- purrr::map_dfr(
@@ -119,8 +120,12 @@ results_wide <- results_long %>%
 
 risk_factor_display_names <- c(
   "rs77924615_A_G" = "G",
-  "diabetes"       = "Diabetes",
+  "sexFemale"            = "Sex (Women)",
+  # "pgs_cross_594_umod" = "PGS",
+  "diabetes0"       = "Diabetes",
   "smoking"        = "Smoking"
+  # "sc_BMI"         = "BMI",
+  # "sc_UACR"        = "uACR"
 )
 
 results_for_table <- results_wide %>%
@@ -204,4 +209,5 @@ latex_final_string <- latex_table_object %>%
     "\\\\begin{table}[!h]"
   )
 
+# output file requires manual adjustment of caption + label
 writeLines(latex_final_string, file.path(dir_out, "tables", "ukb-ic.tex"))

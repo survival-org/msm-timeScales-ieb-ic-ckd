@@ -368,6 +368,14 @@ p_bias <- create_bias_rmse_plot(summ_long, "avg_bias", "Average bias",
 p_rmse <- create_bias_rmse_plot(summ_long, "avg_rmse", "Average RMSE",
                                 events_scaled, scale_f, font_size = 16)
 
+ggsave(file.path(dir_figures, "ts_bh_bias.png"),
+       plot   = p_bias,
+       width  = 10, height = 6)
+
+ggsave(file.path(dir_figures, "ts_bh_rmse.png"),
+       plot   = p_rmse,
+       width  = 10, height = 6)
+
 combined_plot <- p_bias / p_rmse +
   plot_layout(guides = 'collect') & # Collects legends from both plots
   theme(

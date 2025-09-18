@@ -13,6 +13,7 @@ library(pammtools)
 library(ggplot2)
 library(viridis)
 library(kableExtra)
+library(RColorBrewer)
 
 # data prep ----
 
@@ -1229,7 +1230,7 @@ extract_ranges <- function(ped_new_1, ped_new_2, transitions = c("0->1", "0->4",
 }
 
 
-create_2d_plots <- function(ped_new, model, trans, ranges) {
+create_2d_plots <- function(ped_new, model, trans, ranges, save_plots = TRUE, dir_out = "") {
 
   ped_new_trans <- ped_new %>% filter(transition == trans)
   digs       <- regmatches(trans, regexec("([0-9]+)->([0-9]+)", trans))[[1]]
@@ -1262,14 +1263,18 @@ create_2d_plots <- function(ped_new, model, trans, ranges) {
     scale_y_continuous(limits = c(0,1), breaks = seq(0, 1, by=0.2)) +
     labs(title = paste("Transition", trans), x = "Age", y = "Transition Probability")
 
-  ggsave(file.path(dir_out, "figures", model, sprintf("line_loghazard_age_%s_%s.png", from_digit, to_digit)),
-    plot = p_loghazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("line_hazard_age_%s_%s.png", from_digit, to_digit)),
-    plot = p_hazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("line_cumu_age_%s_%s.png", from_digit, to_digit)),
-    plot = p_cumu, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("line_tp_age_%s_%s.png", from_digit, to_digit)),
-    plot = p_tp, width = 10, height = 10, units = "cm")
+  if(save_plots) {
+    dir.create(file.path(dir_out, "figures", model), showWarnings = FALSE, recursive = TRUE)
+
+    ggsave(file.path(dir_out, "figures", model, sprintf("line_loghazard_age_%s_%s.png", from_digit, to_digit)),
+      plot = p_loghazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("line_hazard_age_%s_%s.png", from_digit, to_digit)),
+      plot = p_hazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("line_cumu_age_%s_%s.png", from_digit, to_digit)),
+      plot = p_cumu, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("line_tp_age_%s_%s.png", from_digit, to_digit)),
+      plot = p_tp, width = 10, height = 10, units = "cm")
+  }
 
   out <- list(
     p_loghazard = p_loghazard,
@@ -1282,7 +1287,9 @@ create_2d_plots <- function(ped_new, model, trans, ranges) {
 
 }
 
-create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset_slices, prog_after_onset_slices = NULL, max_time_since_onset = 23, max_time_since_progression = 16) {
+create_3d_plots <- function(ped_new, model, trans, ranges, time_scale,
+  age_onset_slices, prog_after_onset_slices = NULL, max_time_since_onset = 23,
+  max_time_since_progression = 16, save_plots = TRUE, dir_out = "") {
 
   ped_new_trans <- ped_new %>% filter(transition == trans)
   digs <- regmatches(trans, regexec("([0-9]+)->([0-9]+)", trans))[[1]]
@@ -1412,7 +1419,6 @@ create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset
         by = c("age_onset", "age_progression")
       )
 
-    # --- CHANGE 1: Create a dataframe to expand the x-axis limits ---
     expansion_df <- slice_df %>%
       distinct(age_onset) %>%
       mutate(!!time := age_onset)
@@ -1420,7 +1426,6 @@ create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset
     p_slice_loghazard <- ggplot(slice_df, aes(x = !!sym(time), y = loghazard, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
       geom_ribbon(aes(ymin = loghazard_lower, ymax = loghazard_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
-      # --- CHANGE 2: Add an invisible geom_blank layer ---
       geom_blank(data = expansion_df, inherit.aes = FALSE, aes(x = !!sym(time))) +
       scale_colour_brewer(name = "Time until progression", palette = "RdBu") +
       scale_fill_brewer(name = "Time until progression", palette = "RdBu") +
@@ -1451,13 +1456,13 @@ create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset
       labs(title = paste("Transition", trans), x = xlab, y = "Cumulative Hazard") +
       theme(panel.spacing = unit(1.5, "lines"))
 
-    p_slice_tp <- ggplot(slice_df, aes(x = !!sym(time), y = trans_prob * 100, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
-      geom_ribbon(aes(ymin = trans_lower * 100, ymax = trans_upper * 100), alpha = 0.2, colour = NA, show.legend = FALSE) +
+    p_slice_tp <- ggplot(slice_df, aes(x = !!sym(time), y = trans_prob, group = factor(prog_after_onset), colour = factor(prog_after_onset), fill = factor(prog_after_onset))) +
+      geom_ribbon(aes(ymin = trans_lower, ymax = trans_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
       geom_line(linewidth = 1) +
       geom_blank(data = expansion_df, inherit.aes = FALSE, aes(x = !!sym(time))) +
       scale_colour_brewer(name = "Time until progression", palette = "RdBu") +
       scale_fill_brewer(name = "Time until progression", palette = "RdBu") +
-      scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20), labels = function(x) paste0(x, "%")) +
+      scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
       facet_wrap(~ age_onset, ncol = 2, labeller = labeller(age_onset = function(x) paste0("Age at CKD onset: ", x))) +
       theme(legend.position = "bottom", legend.box = "horizontal") +
       labs(title = paste("Transition", trans), x = xlab, y = "Transition probability (%)") +
@@ -1465,22 +1470,26 @@ create_3d_plots <- function(ped_new, model, trans, ranges, time_scale, age_onset
 
   }
 
-  ggsave(file.path(dir_out, "figures", model, sprintf("contour_loghazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_contour_loghazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("contour_hazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_contour_hazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("contour_cumu_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_contour_cumu, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("contour_tp_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_contour_tp, width  = 10, height = 10, units  = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("slice_loghazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_slice_loghazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("slice_hazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_slice_hazard, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("slice_cumu_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_slice_cumu, width = 10, height = 10, units = "cm")
-  ggsave(file.path(dir_out, "figures", model, sprintf("slice_tp_%s_%s_%s.png", time_scale, from_digit, to_digit)),
-    plot = p_slice_tp, width = 10, height = 10, units = "cm")
+  if(save_plots) {
+    dir.create(file.path(dir_out, "figures", model), showWarnings = FALSE, recursive = TRUE)
+
+    ggsave(file.path(dir_out, "figures", model, sprintf("contour_loghazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_contour_loghazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("contour_hazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_contour_hazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("contour_cumu_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_contour_cumu, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("contour_tp_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_contour_tp, width  = 10, height = 10, units  = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("slice_loghazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_slice_loghazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("slice_hazard_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_slice_hazard, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("slice_cumu_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_slice_cumu, width = 10, height = 10, units = "cm")
+    ggsave(file.path(dir_out, "figures", model, sprintf("slice_tp_%s_%s_%s.png", time_scale, from_digit, to_digit)),
+      plot = p_slice_tp, width = 10, height = 10, units = "cm")
+  }
 
   out <- list(
     p_contour_loghazard = p_contour_loghazard,
@@ -1563,11 +1572,12 @@ convert_to_latex_risk_factors <- function(final_table) {
       SE = sprintf("%.3f", as.numeric(SE)),
       p_value = dplyr::if_else(round(as.numeric(p_value), 3) == 0, "$<$0.001", sprintf("%.3f", as.numeric(p_value))),
       Scenario = dplyr::case_when(
-        grepl("BMI \\+ uACR \\+ Smoking \\+ eGFR", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR + Smoking + eGFR}",
-        grepl("BMI \\+ uACR \\+ Smoking", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR + Smoking}",
-        grepl("BMI \\+ uACR", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI\\\\ + uACR}",
-        grepl("BMI", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes + BMI}",
-        grepl("G \\+ PGS \\+ Diabetes", Scenario) ~ "\\shortstack[l]{G + PGS + Diabetes}",
+        grepl("uACR", Scenario)     ~ "\\shortstack[l]{G + Sex + PGS + Diabetes\\\\ + Smoking + BMI + uACR}",
+        grepl("BMI", Scenario)      ~ "\\shortstack[l]{G + Sex + PGS + Diabetes\\\\ + Smoking + BMI}",
+        grepl("Smoking", Scenario)  ~ "\\shortstack[l]{G + Sex + PGS + Diabetes\\\\ + Smoking}",
+        grepl("Diabetes", Scenario) ~ "\\shortstack[l]{G + Sex + PGS + Diabetes}",
+        grepl("PGS", Scenario)      ~ "\\shortstack[l]{G + Sex + PGS}",
+        grepl("Sex", Scenario)      ~ "\\shortstack[l]{G + Sex}",
         TRUE ~ Scenario
       ),
       Effect = dplyr::recode(Effect, "G" = "0→1")
@@ -1619,8 +1629,8 @@ convert_to_latex_risk_factors <- function(final_table) {
     "\\end{tabular}",
     "\\parbox{\\linewidth}{\\footnotesize",
     "\\begin{itemize}[leftmargin=*, noitemsep, label=\\textcolor{white}{\\textbullet}]",
-    " \\item G: Genetic variant rs77924615.",
-    " \\item 0: Healthy; 1: CKD; 2: Severe CKD; 3: ESKD.",
+    " \\item G: Genetic variant rs77924615 (effect allele: \\textit{G}).",
+    " \\item 0: Healthy; 1: Mild CKD; 2: Severe CKD; 3: ESKD.",
     "\\end{itemize}",
     "}",
     "\\end{table}"
@@ -1634,12 +1644,12 @@ convert_to_latex_risk_factors <- function(final_table) {
 create_summary_for_latex <- function(events_ps) {
 
   risk_factors <- c(
-    "pgs_cross_594_umod", "diabetes", "sc_BMI",
-    "sc_UACR", "smoking", "eGFRcrea"
+    "sex", "pgs_cross_594_umod", "diabetes",
+    "smoking", "sc_BMI", "sc_UACR"
   )
   risk_factor_labels <- c(
-    "PGS", "Diabetes", "BMI",
-    "uACR", "Smoking", "eGFR"
+    "Sex (Women)", "PGS", "Diabetes",
+    "Smoking", "BMI", "uACR"
   )
   risk_factor_map <- setNames(risk_factor_labels, risk_factors)
 
@@ -1654,10 +1664,10 @@ create_summary_for_latex <- function(events_ps) {
       from = factor(
         dplyr::case_when(
           from == "State 0" ~ "Healthy",
-          from == "State 1" ~ "CKD",
+          from == "State 1" ~ "Mild CKD",
           from == "State 2" ~ "Severe CKD"
         ),
-        levels = c("Healthy", "CKD", "Severe CKD")
+        levels = c("Healthy", "Mild CKD", "Severe CKD")
       ),
       diabetes = as.numeric(as.character(diabetes)),
       smoking = as.numeric(as.character(smoking))
@@ -1676,22 +1686,27 @@ create_summary_for_latex <- function(events_ps) {
   summarise_risk_factors <- function(df) {
     df %>%
       dplyr::summarise(
+        sex = {
+          n_positive <- sum(sex == "Female", na.rm = TRUE)
+          n_total <- sum(!is.na(sex))
+          percentage <- ifelse(n_total > 0, (n_positive / n_total), 0)
+          sprintf("%s (%s\\%%)", prettyNum(n_positive, big.mark = ","), sprintf("%.1f", percentage))
+        },
         pgs_cross_594_umod = sprintf("\\makecell{%.0f \\\\ (%.0f-%.0f)}", median(pgs_cross_594_umod, na.rm = TRUE), min(pgs_cross_594_umod, na.rm = TRUE), max(pgs_cross_594_umod, na.rm = TRUE)),
-        sc_BMI = sprintf("\\makecell{%.1f \\\\ (%.1f-%.1f)}", median(sc_BMI, na.rm = TRUE), min(sc_BMI, na.rm = TRUE), max(sc_BMI, na.rm = TRUE)),
-        sc_UACR = sprintf("\\makecell{%.1f \\\\ (%.1f-%.1f)}", median(sc_UACR, na.rm = TRUE), min(sc_UACR, na.rm = TRUE), max(sc_UACR, na.rm = TRUE)),
-        eGFRcrea = sprintf("\\makecell{%.1f \\\\ (%.1f-%.1f)}", median(eGFRcrea, na.rm = TRUE), min(eGFRcrea, na.rm = TRUE), max(eGFRcrea, na.rm = TRUE)),
         diabetes = {
           n_positive <- sum(diabetes == 1, na.rm = TRUE)
           n_total <- sum(!is.na(diabetes))
-          percentage <- ifelse(n_total > 0, (n_positive / n_total) * 100, 0)
+          percentage <- ifelse(n_total > 0, (n_positive / n_total), 0)
           sprintf("%s (%s\\%%)", prettyNum(n_positive, big.mark = ","), sprintf("%.1f", percentage))
         },
         smoking = {
           n_positive <- sum(smoking == 1, na.rm = TRUE)
           n_total <- sum(!is.na(smoking))
-          percentage <- ifelse(n_total > 0, (n_positive / n_total) * 100, 0)
+          percentage <- ifelse(n_total > 0, (n_positive / n_total), 0)
           sprintf("%s (%s\\%%)", prettyNum(n_positive, big.mark = ","), sprintf("%.1f", percentage))
         },
+        sc_BMI = sprintf("\\makecell{%.1f \\\\ (%.1f-%.1f)}", median(sc_BMI, na.rm = TRUE), min(sc_BMI, na.rm = TRUE), max(sc_BMI, na.rm = TRUE)),
+        sc_UACR = sprintf("\\makecell{%.1f \\\\ (%.1f-%.1f)}", median(sc_UACR, na.rm = TRUE), min(sc_UACR, na.rm = TRUE), max(sc_UACR, na.rm = TRUE)),
         .groups = "drop"
       )
   }
@@ -1708,14 +1723,40 @@ create_summary_for_latex <- function(events_ps) {
     dplyr::mutate(`Risk Factor` = factor(`Risk Factor`, levels = risk_factor_labels)) %>%
     dplyr::arrange(`Risk Factor`, State)
 
-  n_table <- df_prep %>%
-    dplyr::count(from, genotype, name = "count") %>%
-    tidyr::pivot_wider(names_from = "genotype", values_from = "count") %>%
-    dplyr::mutate(Total = AA + `AG/GA` + GG) %>%
-    dplyr::mutate(dplyr::across(-from, ~prettyNum(.x, big.mark = ",")))
+  n_counts_raw <- df_prep %>%
+    dplyr::count(from, genotype, name = "count")
+
+  genotype_totals <- n_counts_raw %>%
+    dplyr::group_by(genotype) %>%
+    dplyr::summarise(genotype_total = sum(count), .groups = "drop")
+
+  grand_total <- sum(genotype_totals$genotype_total)
+
+  n_table_by_genotype <- n_counts_raw %>%
+    dplyr::left_join(genotype_totals, by = "genotype") %>%
+    dplyr::mutate(
+      percentage = (count / genotype_total),
+      formatted_str = sprintf("%s (%s\\%%)", prettyNum(count, big.mark = ","), sprintf("%.1f", percentage))
+    ) %>%
+    dplyr::select(from, genotype, formatted_str) %>%
+    tidyr::pivot_wider(names_from = "genotype", values_from = "formatted_str")
+
+  n_table_total_col <- n_counts_raw %>%
+    dplyr::group_by(from) %>%
+    dplyr::summarise(state_total = sum(count), .groups = "drop") %>%
+    dplyr::mutate(
+      percentage = (state_total / grand_total),
+      Total = sprintf("%s (%s\\%%)", prettyNum(state_total, big.mark = ","), sprintf("%.1f", percentage))
+    ) %>%
+    dplyr::select(from, Total)
+
+  n_table <- n_table_by_genotype %>%
+    dplyr::left_join(n_table_total_col, by = "from") %>%
+    dplyr::select(from, AA, `AG/GA`, GG, Total)
 
   return(list(ns = ns, table = final_table, n_table = n_table))
 }
+
 
 convert_to_latex_risk_factor_distributions <- function(distributions) {
 
@@ -1729,7 +1770,6 @@ convert_to_latex_risk_factor_distributions <- function(distributions) {
     "\\caption{\\captionukbriskfactordistributions}",
     "\\label{tab:ukb-risk-factor-distributions}",
     "\\centering",
-    "\\setlength{\\tabcolsep}{4pt}",
     "\\begin{tabular}[t]{llcccc}",
     "\\toprule",
     "& & \\multicolumn{3}{c}{Genotype of rs77924615} & \\\\",
@@ -1746,42 +1786,51 @@ convert_to_latex_risk_factor_distributions <- function(distributions) {
     is_shaded_block <- (ceiling(i / 3) %% 2 != 0)
     risk_factor_text <- final_table$`Risk Factor`[i]
 
-    # Helper function to apply cell coloring if the block is shaded
-    apply_color <- function(cell_content) {
+    # Helper function to build a fully-formatted row, applying cell-by-cell
+    # coloring to shaded rows to robustly prevent white stripes.
+    build_row_string <- function(first_cell, state_cell, data_cells) {
+      all_cells <- c(first_cell, state_cell, unlist(data_cells))
+
       if (is_shaded_block) {
-        return(paste0("\\cellcolor{gray!10}", cell_content))
+        # When shading, wrap every individual cell with \cellcolor.
+        # The multirow cell already has its color, so we don't wrap it again.
+        colored_cells <- sapply(all_cells, function(cell) {
+          if (grepl("\\multirow", cell, fixed = TRUE)) {
+            return(cell)
+          }
+          return(paste0("\\cellcolor{gray!10}", cell))
+        })
+        return(paste(colored_cells, collapse = " & "))
+      } else {
+        return(paste(all_cells, collapse = " & "))
       }
-      return(cell_content)
     }
 
     # Row 1
-    cells_r1 <- c(apply_color(""), apply_color("0"), sapply(final_table[i, 3:ncol(final_table)], apply_color))
-    body_lines <- c(body_lines, paste(cells_r1, collapse = " & "))
+    body_lines <- c(body_lines, build_row_string("", "0", final_table[i, 3:ncol(final_table)]))
 
     # Row 2
-    cells_r2 <- c(apply_color(""), apply_color("1"), sapply(final_table[i + 1, 3:ncol(final_table)], apply_color))
-    body_lines <- c(body_lines, paste(cells_r2, collapse = " & "))
+    body_lines <- c(body_lines, build_row_string("", "1", final_table[i + 1, 3:ncol(final_table)]))
 
-    # Row 3 (with multirow)
+    # Row 3 (with the multirow cell)
     if (is_shaded_block) {
       multirow_cell <- paste0("\\multirow{-3}{*}{\\cellcolor{gray!10}", risk_factor_text, "}")
     } else {
       multirow_cell <- paste0("\\multirow{-3}{*}{", risk_factor_text, "}")
     }
-    cells_r3 <- c(multirow_cell, apply_color("2"), sapply(final_table[i + 2, 3:ncol(final_table)], apply_color))
-    body_lines <- c(body_lines, paste(cells_r3, collapse = " & "))
+    body_lines <- c(body_lines, build_row_string(multirow_cell, "2", final_table[i + 2, 3:ncol(final_table)]))
   }
 
   body_lines <- c(body_lines, "\\midrule\\midrule")
 
-  # 'n' block does not get shaded
+  # 'n' block is never shaded.
+  multirow_n_cell <- "\\multirow{-3}{*}{n}"
   n_cells_r1 <- paste(n_table[1, 2:ncol(n_table)], collapse = " & ")
   body_lines <- c(body_lines, paste(" & 0 &", n_cells_r1))
 
   n_cells_r2 <- paste(n_table[2, 2:ncol(n_table)], collapse = " & ")
   body_lines <- c(body_lines, paste(" & 1 &", n_cells_r2))
 
-  multirow_n_cell <- "\\multirow{-3}{*}{n}"
   n_cells_r3 <- paste(n_table[3, 2:ncol(n_table)], collapse = " & ")
   body_lines <- c(body_lines, paste(multirow_n_cell, " & 2 &", n_cells_r3))
 

@@ -1166,9 +1166,10 @@ plot_fixedEffects_boxplots <- function(res_fe, algo_levels = c("algo_timeScales"
   geom_hline(data = truth_df,
          aes(yintercept = true_val),
          colour = "darkorange", linewidth = 1.1) +
-  geom_boxplot(outlier.shape = NA,
-         position = position_dodge(width = 0.85),
-         linewidth = 0.6) +
+  geom_boxplot(
+        # outlier.shape = NA,
+        position = position_dodge(width = 0.85),
+        linewidth = 0.6) +
   scale_fill_manual(
     name = "Smooth Type",
     values = c("Penalized Splines" = "#2c65cf", "Factor Smooth" = "darkgreen")
@@ -1347,6 +1348,8 @@ plot_one_bh_coverage <- function(df, transition_name) {
           strip.placement = "outside",
           strip.text.y.left = element_text(angle = 0))
 }
+
+
 create_bias_rmse_plot <- function(df_lines, m, title, df_hist, scale_f, font_size = 14) {
 
   # --- Data Preparation ---
@@ -1373,6 +1376,12 @@ create_bias_rmse_plot <- function(df_lines, m, title, df_hist, scale_f, font_siz
       # Factor ordering can be added here if needed
     )
 
+  y_lab <- switch(
+    m,
+    avg_bias = "Bias (Log-hazard)",
+    avg_rmse = "RMSE (Log-hazard)"
+  )
+
   # --- Plotting ---
   ggplot() +
     ## Histogram
@@ -1394,7 +1403,7 @@ create_bias_rmse_plot <- function(df_lines, m, title, df_hist, scale_f, font_siz
     # Facets and Labels
     facet_wrap(~ transition, nrow = 1,
                labeller = labeller(transition = c("1" = "Transition 1", "2" = "Transition 2", "3" = "Transition 3"))) +
-    labs(x = "Time", y = NULL, title = title,
+    labs(x = "Time", y = y_lab, title = title,
          fill = "DGP", colour = "DGP-by-model \ncombination") +
 
     # Axes and Scales

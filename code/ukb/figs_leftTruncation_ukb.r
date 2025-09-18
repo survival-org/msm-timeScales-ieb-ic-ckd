@@ -110,6 +110,11 @@ mts_onset_df  <- extract_and_process(pam_mts, "age_onset", mts_onset_map)
 ssts_prog_df  <- extract_and_process(pam_ssts, "age_progression", ssts_prog_map)
 mts_prog_df   <- extract_and_process(pam_mts, "age_progression", mts_prog_map)
 
+saveRDS(ssts_onset_df, file.path(dir_data, "leftTruncation_ssts_onset_df.rds"))
+saveRDS(mts_onset_df, file.path(dir_data, "leftTruncation_mts_onset_df.rds"))
+saveRDS(ssts_prog_df, file.path(dir_data, "leftTruncation_ssts_prog_df.rds"))
+saveRDS(mts_prog_df, file.path(dir_data, "leftTruncation_mts_prog_df.rds"))
+
 create_facet_plot <- function(data, covariate_col, plot_title, x_axis_label, transition_order) {
   if (nrow(data) == 0) {
     return(ggplot() + theme_void() + labs(title = paste(plot_title, "\n(No data found)")))
@@ -133,7 +138,7 @@ create_facet_plot <- function(data, covariate_col, plot_title, x_axis_label, tra
       x = x_axis_label,
       y = y_axis_label
     ) +
-    theme_classic() +
+    theme_bw(base_size = font_size) +
     theme(
       text = element_text(size = font_size),
       plot.title = element_text(hjust = 0.5, face = "bold", size = font_size + 2),

@@ -71,8 +71,7 @@ events_ps <- readRDS(file.path(dir_data, file_events_ps))
 base_terms <- "
   s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
-  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-  sex * transition
+  s(age_progression, bs = 'ps', k = 20, by = transition_after_progression)
 "
 
 # 2) For each iteration, list just the additional “rs77924615_A_G*transition”‐type terms:
@@ -80,56 +79,67 @@ extra_terms_list <- list(
   # 1st iteration: only “G × transition”
   "rs77924615_A_G * transition",
 
-  # 2nd iteration: add PGS × transition
+  # 2nd iteration: add Sex × transition
   c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition"),
+    "sex * transition"),
 
-  # 3rd iteration: add Diabetes × transition
+  # 3nd iteration: add PGS × transition
   c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition",
+    "sex * transition",
+    "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)"),
+
+  # 4th iteration: add Diabetes × transition
+  c("rs77924615_A_G * transition",
+    "sex * transition",
+    "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)",
     "diabetes * transition"),
 
-  # 4th iteration: add s(sc_BMI, by = transition)
+  # 5th iteration: add Smoking
   c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition",
+    "sex * transition",
+    "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)",
     "diabetes * transition",
-    "s(sc_BMI, bs = 'ps', k = 20, by = transition)"),
-
-  # 5th iteration: add s(sc_UACR, by = transition)
-  c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition",
-    "diabetes * transition",
-    "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
-    "s(sc_UACR, bs = 'ps', k = 20, by = transition)"),
-
-  # 6th iteration: add smoking × transition
-  c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition",
-    "diabetes * transition",
-    "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
-    "s(sc_UACR, bs = 'ps', k = 20, by = transition)",
     "smoking * transition"),
 
-  # 7th iteration: add s(eGFRcrea, by = transition)
+  # 6th iteration: add BMI × transition
   c("rs77924615_A_G * transition",
-    "pgs_cross_594_umod * transition",
+    "sex * transition",
+    "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)",
     "diabetes * transition",
-    "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
-    "s(sc_UACR, bs = 'ps', k = 20, by = transition)",
     "smoking * transition",
-    "s(eGFRcrea, bs = 'ps', k = 20, by = transition)")
+    "s(sc_BMI, bs = 'ps', k = 20, by = transition)"),
+
+  # 7th iteration: add uACR × transition
+  c("rs77924615_A_G * transition",
+    "sex * transition",
+    "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)",
+    "diabetes * transition",
+    "smoking * transition",
+    "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
+    "s(sc_UACR, bs = 'ps', k = 20, by = transition)")
+
+  # # 8th iteration: add s(eGFRcrea, by = transition)
+  # c("rs77924615_A_G * transition",
+  #   "sex * transition",
+  #   "s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition)",
+  #   "diabetes * transition",
+  #   "s(sc_BMI, bs = 'ps', k = 20, by = transition)",
+  #   "s(sc_UACR, bs = 'ps', k = 20, by = transition)",
+  #   "smoking * transition",
+  #   "s(eGFRcrea, bs = 'ps', k = 20, by = transition)")
 
 )
 
 # 3) Friendly scenario names (one per iteration)
 scenario_names <- c(
   "G only",
-  "G + PGS",
-  "G + PGS + Diabetes",
-  "G + PGS + Diabetes + BMI",
-  "G + PGS + Diabetes + BMI + uACR",
-  "G + PGS + Diabetes + BMI + uACR + Smoking",
-  "G + PGS + Diabetes + BMI + uACR + Smoking + eGFR"
+  "G + Sex",
+  "G + Sex + PGS",
+  "G + Sex + PGS + Diabetes",
+  "G + Sex + PGS + Diabetes + Smoking",
+  "G + Sex + PGS + Diabetes + Smoking + BMI",
+  "G + Sex + PGS + Diabetes + Smoking + BMI + uACR"
+  # "G + Sex + PGS + Diabetes + BMI + uACR + Smoking + eGFR"
 )
 
 # 5) Loop over each scenario using foreach
@@ -167,20 +177,20 @@ results <- foreach(i = seq_along(extra_terms_list), .packages = c("mgcv", "dplyr
   se_main    <- su$se["rs77924615_A_G"]
   p_main     <- su$p.pv["rs77924615_A_G"]
 
-  coef_t12   <- su$p.coeff["transition1->2:rs77924615_A_G"]
-  se_t12     <- su$se["transition1->2:rs77924615_A_G"]
-  p_t12      <- su$p.pv["transition1->2:rs77924615_A_G"]
+  coef_t12   <- su$p.coeff["rs77924615_A_G:transition1->2"]
+  se_t12     <- su$se["rs77924615_A_G:transition1->2"]
+  p_t12      <- su$p.pv["rs77924615_A_G:transition1->2"]
 
-  coef_12    <- su$p.coeff["rs77924615_A_G"] + su$p.coeff["transition1->2:rs77924615_A_G"]
-  se_12      <- sqrt(su$se["rs77924615_A_G"]^2 + su$se["transition1->2:rs77924615_A_G"]^2 + 2*vcov["rs77924615_A_G", "transition1->2:rs77924615_A_G"])
+  coef_12    <- su$p.coeff["rs77924615_A_G"] + su$p.coeff["rs77924615_A_G:transition1->2"]
+  se_12      <- sqrt(su$se["rs77924615_A_G"]^2 + su$se["rs77924615_A_G:transition1->2"]^2 + 2*vcov["rs77924615_A_G", "rs77924615_A_G:transition1->2"])
   p_12       <- 2 * (1 - pnorm(abs(coef_12 / se_12)))
 
-  coef_t23   <- su$p.coeff["transition2->3:rs77924615_A_G"]
-  se_t23     <- su$se["transition2->3:rs77924615_A_G"]
-  p_t23      <- su$p.pv["transition2->3:rs77924615_A_G"]
+  coef_t23   <- su$p.coeff["rs77924615_A_G:transition2->3"]
+  se_t23     <- su$se["rs77924615_A_G:transition2->3"]
+  p_t23      <- su$p.pv["rs77924615_A_G:transition2->3"]
 
-  coef_23    <- su$p.coeff["rs77924615_A_G"] + su$p.coeff["transition2->3:rs77924615_A_G"]
-  se_23      <- sqrt(su$se["rs77924615_A_G"]^2 + su$se["transition2->3:rs77924615_A_G"]^2 + 2*vcov["rs77924615_A_G", "transition2->3:rs77924615_A_G"])
+  coef_23    <- su$p.coeff["rs77924615_A_G"] + su$p.coeff["rs77924615_A_G:transition2->3"]
+  se_23      <- sqrt(su$se["rs77924615_A_G"]^2 + su$se["rs77924615_A_G:transition2->3"]^2 + 2*vcov["rs77924615_A_G", "rs77924615_A_G:transition2->3"])
   p_23       <- 2 * (1 - pnorm(abs(coef_23 / se_23)))
 
   # coef_main_r  <- round(coef_main, 2)
@@ -280,16 +290,17 @@ formulas <- list(
   unadjusted = "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-  sex * transition + rs77924615_A_G * transition",
+  rs77924615_A_G * transition",
   adjusted = "ped_status ~ s(tend, bs = 'ps', k = 20, by = transition) +
   s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
   s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-  sex * transition + rs77924615_A_G * transition +
-  pgs_cross_594_umod * transition + diabetes * transition +
-  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
-  s(sc_UACR, bs = 'ps', k = 20, by = transition) +
+  rs77924615_A_G * transition +
+  sex * transition +
+  s(pgs_cross_594_umod, bs = 'ps', k = 20, by = transition) +
+  diabetes * transition +
   smoking * transition +
-  s(eGFRcrea, bs = 'ps', k = 20, by = transition)"
+  s(sc_BMI, bs = 'ps', k = 20, by = transition) +
+  s(sc_UACR, bs = 'ps', k = 20, by = transition)"
 )
 
 weights <- list(
@@ -307,7 +318,7 @@ scenarios <- expand.grid(
     wvec = weights[weight_name]
   )
 
-num_cores <- 4
+num_cores <- 20
 registerDoParallel(cores = num_cores)
 
 results_list <- foreach(i = 1:nrow(scenarios), .packages = c("mgcv", "dplyr")) %dopar% {
@@ -332,12 +343,12 @@ results_list <- foreach(i = 1:nrow(scenarios), .packages = c("mgcv", "dplyr")) %
   se_main   <- su$se[term_main]
   p_main    <- su$p.pv[term_main]
 
-  term_int_12 <- "transition1->2:rs77924615_A_G"
+  term_int_12 <- "rs77924615_A_G:transition1->2"
   coef_12 <- coef_main + su$p.coeff[term_int_12]
   se_12   <- sqrt(se_main^2 + su$se[term_int_12]^2 + 2 * vc[term_main, term_int_12])
   p_12    <- 2 * pnorm(abs(coef_12 / se_12), lower.tail = FALSE)
 
-  term_int_23 <- "transition2->3:rs77924615_A_G"
+  term_int_23 <- "rs77924615_A_G:transition2->3"
   coef_23 <- coef_main + su$p.coeff[term_int_23]
   se_23   <- sqrt(se_main^2 + su$se[term_int_23]^2 + 2 * vc[term_main, term_int_23])
   p_23    <- 2 * pnorm(abs(coef_23 / se_23), lower.tail = FALSE)
@@ -377,13 +388,26 @@ out <- results %>%
 write.csv2(out, file = file.path(dir_out, "weighting_and_adjusting_models_results_msm.csv"), row.names = FALSE)
 out <- read.csv2(file = file.path(dir_out, "weighting_and_adjusting_models_results_msm.csv"))
 
+footer_text <- "\\parbox{\\linewidth}{\\footnotesize \\begin{itemize}[leftmargin=*, noitemsep, label=\\textcolor{white}{\\textbullet}] \\item 0: Healthy; 1: Mild CKD; 2: Severe CKD; 3: ESKD. \\end{itemize}}"
 latex_table <- kable(out, "latex", booktabs = TRUE, escape = FALSE,
-      caption = "\\captionukbmodelsriskfactors",
-      label = "ukb-models-risk-factors",
+      caption = "\\captionukbadjustmentweighting",
+      label = "tab:ukb-adjustment-weighting",
       align = "cccrrr",
-      position = "!ht") %>%
-  kable_styling(latex_options = "striped")
+      position = "!ht",
+      # Add this argument to remove all \addlinespace commands
+      linesep = "") %>%
+
+  # Color the 1st and 3rd groups of rows (rows 1-3 and 7-9)
+  row_spec(c(1:3, 7:9), background = "gray!10") %>%
+
+  # Add a horizontal line (\midrule) after the end of each 3-row group
+  row_spec(c(3, 6, 9), extra_latex_after = "\\midrule") %>%
+
+  # Add the custom footer using the footnote function
+  footnote(general = footer_text,
+           general_title = "",
+           escape = FALSE,
+           threeparttable = FALSE)
 
 # output file requires manual adjustment of caption + label
 writeLines(latex_table, file.path(dir_out, "tables", "ukb-adjustment-weighting.tex"))
-

@@ -1,0 +1,27 @@
+\begin{table*}[htbp]
+\centering
+\caption{\captionicfebias}
+\label{tab:sim-ic-fe-bias}
+\begin{sideways}
+\begin{tabular}{llcccccc}
+\toprule
+& & \multicolumn{3}{c}{Piecewise Exponential DGP} & \multicolumn{3}{c}{Weibull DGP} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8}
+Algorithm & \shortstack[l]{Estimation \\ Time Point} & Beta & Uniform & Equidistant & Beta & Uniform & Equidistant \\
+\midrule
+PAM & Exact & 0.00 & 0.00 & 0.01 & -0.01 & -0.00 & 0.00 \\
+PAM & Mid & -0.01 & 0.01 & 0.01 & 0.00 & 0.01 & -0.00 \\
+PAM & End & 0.02 & 0.03 & -0.01 & 0.00 & 0.01 & -0.00 \\
+\addlinespace
+Cox & Exact & 0.02 & 0.01 & -0.01 & 0.01 & 0.00 & -0.00 \\
+Cox & Mid & 0.01 & 0.00 & -0.01 & 0.01 & 0.01 & -0.00 \\
+Cox & End & -0.00 & 0.01 & -0.00 & 0.02 & 0.02 & 0.00 \\
+\addlinespace
+Weibull AFT & Exact & -0.04 & -0.06 & -0.02 & -0.00 & -0.00 & 0.00 \\
+Weibull AFT & Adj. & -0.03 & -0.04 & -0.05 & 0.00 & 0.00 & -0.01 \\
+Weibull AFT & Mid & -0.02 & -0.03 & -0.04 & 0.02 & 0.02 & 0.03 \\
+Weibull AFT & End & -0.01 & -0.01 & -0.03 & 0.00 & 0.00 & -0.01 \\
+\bottomrule
+\end{tabular}
+\end{sideways}
+\end{table*}

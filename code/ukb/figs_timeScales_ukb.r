@@ -13,18 +13,121 @@ library(patchwork)
 # set directories ----
 setwd("wis37138") # only necessary to enable plotting because I have no write permissions in "/"
 
-dir_data <- "/wis37138/msm-timeScales-ieb-ic-ckd/data/ukb/baseline_plots"
+dir_data <- "/wis37138/msm-timeScales-ieb-ic-ckd/data/ukb"
+dir_out <- "/wis37138/msm-timeScales-ieb-ic-ckd/results/ukb/"
+dir_data_baseline_plots <- "/wis37138/msm-timeScales-ieb-ic-ckd/data/ukb/baseline_plots"
 dir_figures <- "/wis37138/msm-timeScales-ieb-ic-ckd/results/ukb/figures/export"
 
 # Set font size for all plot elements
 font_size <- 20
 arrow <- " \u2192 "
 
+# create raw plots ----
+# min_age <- 35
+
+# ped_events <- readRDS(file.path(dir_data, file_ped_events)) %>%
+#   filter(tstart >= min_age) %>%
+#   mutate(
+#     to = ifelse(to == "death", 4, to),
+#     transition = paste0(from, "->", to) %>% as.factor(), # for pammtools::add_surv_prob
+#     diabetes = ifelse(diabetes == 0, 0, 1)
+#   ) %>%
+#   add_transVars()
+
+formulas <- list(
+  pam_ssts = "ped_status ~
+    s(tend, bs = 'ps', k = 20, by = transition) +
+    s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression)",
+  pam_mts = "ped_status ~
+    s(tend, bs = 'ps', k = 20, by = transition_to_death) +
+    s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+    s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
+    s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression)"
+)
+
+# num_cores   <- length(formulas)
+# registerDoParallel(cores = num_cores)
+# foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% {
+
+#   mod_formula <- as.formula(formulas[[model]])
+
+#   mod <- mgcv::bam(
+#     formula = mod_formula,
+#     data = ped_events,
+#     family = poisson(),
+#     offset = offset,
+#     method ="fREML",
+#     discrete = TRUE)
+
+#   ped_new <- ped_events %>% make_newped(mod)
+#   saveRDS(ped_new, file.path(dir_data, sprintf("ped_%s.rds", model)))
+#   # ped_new <- readRDS(file.path(dir_data, sprintf("ped_%s.rds", model)))
+
+# }
+# stopImplicitCluster()
+
+ped_new_ssts <- readRDS(file.path(dir_data, "ped_pam_ssts.rds"))
+ped_new_mts  <- readRDS(file.path(dir_data, "ped_pam_mts.rds"))
+
+trans_2d    <- c("0->1", "0->4")
+trans_3d    <- c("1->2", "2->3", "1->4", "2->4")
+transitions <- c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4")
+age_onset_slices  <- c(40, 50, 60, 70)
+prog_after_onset_slices <- c(2, 5, 10, 15)
+
+ranges <- extract_ranges(ped_new_ssts, ped_new_mts, transitions = c("0->1", "0->4", "1->2", "1->4", "2->3", "2->4"), scales = c("loghazard", "hazard", "cumu_hazard"))
+
+num_cores   <- length(formulas)
+registerDoParallel(cores = num_cores)
+foreach(model = names(formulas), .packages = c("ggplot2", "pammtools")) %dopar% {
+
+  fig_dir <- file.path(dir_out, "figures", model)
+  if (!dir.exists(fig_dir)) {
+    dir.create(fig_dir, recursive = TRUE)
+  }
+
+  # mod_formula <- as.formula(formulas[[model]])
+
+  # mod <- mgcv::bam(
+  #   formula = mod_formula,
+  #   data = ped_events,
+  #   family=poisson(),
+  #   offset=offset,
+  #   method="fREML",
+  #   discrete = TRUE)
+
+  # ped_new <- ped_events %>% make_newped(mod)
+  # saveRDS(ped_new, file.path(dir_data, sprintf("ped_%s.rds", model)))
+  ped_new <- readRDS(file.path(dir_data, sprintf("ped_%s.rds", model)))
+
+  for(trans in trans_2d) {
+    trans_print <- gsub("->", "", trans)
+    plots <- create_2d_plots(ped_new, model, trans, ranges, save_plots = FALSE)
+    saveRDS(plots, file.path(dir_data, "baseline_plots", paste0(model, "_plots_", trans_print, ".rds")))
+  }
+
+  for(trans in trans_3d) {
+    trans_print <- gsub("->", "", trans)
+    plots_age <- create_3d_plots(ped_new, model, trans, ranges, "age", age_onset_slices, prog_after_onset_slices, save_plots = FALSE)
+    saveRDS(plots_age, file.path(dir_data, "baseline_plots", paste0(model, "_plots_age_", trans_print, ".rds")))
+    plots_time <- create_3d_plots(ped_new, model, trans, ranges, "time", age_onset_slices, prog_after_onset_slices, save_plots = FALSE)
+    saveRDS(plots_time, file.path(dir_data, "baseline_plots", paste0(model, "_plots_time_", trans_print, ".rds")))
+  }
+
+  # lapply(trans_2d, function(trans) {create_2d_plots(ped_new, model, trans)})
+  # lapply(trans_3d, function(trans) {create_3d_plots(ped_new, model, trans, "age", age_onset_slices, prog_after_onset_slices)})
+  # lapply(trans_3d, function(trans) {create_3d_plots(ped_new, model, trans, "time", age_onset_slices, prog_after_onset_slices)})
+
+}
+stopImplicitCluster()
+
 # 0->1 and 0->4 plot ----
-plots_pam_ssts_01 <- readRDS(file.path(dir_data, paste0("pam_ssts_plots_01.rds")))
-plots_pam_ssts_04 <- readRDS(file.path(dir_data, paste0("pam_ssts_plots_04.rds")))
-plots_pam_mts_01 <- readRDS(file.path(dir_data, paste0("pam_mts_plots_01.rds")))
-plots_pam_mts_04 <- readRDS(file.path(dir_data, paste0("pam_mts_plots_04.rds")))
+plots_pam_ssts_01 <- readRDS(file.path(dir_data_baseline_plots, paste0("pam_ssts_plots_01.rds")))
+plots_pam_ssts_04 <- readRDS(file.path(dir_data_baseline_plots, paste0("pam_ssts_plots_04.rds")))
+plots_pam_mts_01 <- readRDS(file.path(dir_data_baseline_plots, paste0("pam_mts_plots_01.rds")))
+plots_pam_mts_04 <- readRDS(file.path(dir_data_baseline_plots, paste0("pam_mts_plots_04.rds")))
 
 # --- 1. Prepare data for plotting ---
 
@@ -60,8 +163,8 @@ names(color_values) <- transition_labels
 linetype_values <- c("longdash", "dotted")
 names(linetype_values) <- c("SSTS PAM", "MTS PAM")
 
-# Left Panel: Log-hazard
-p_left <- ggplot(df_loghazard, aes(x = tend, y = loghazard, color = transition, linetype = model, fill = transition)) +
+# Top Panel: Log-hazard
+p_top <- ggplot(df_loghazard, aes(x = tend, y = loghazard, color = transition, linetype = model, fill = transition)) +
   geom_ribbon(aes(ymin = loghazard_lower, ymax = loghazard_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
   geom_line(linewidth = 1.2) +
   scale_color_manual(values = color_values, breaks = transition_labels) +
@@ -73,7 +176,7 @@ p_left <- ggplot(df_loghazard, aes(x = tend, y = loghazard, color = transition, 
     color = "Transition",
     linetype = "Model"
   ) +
-  theme_classic() +
+  theme_bw(base_size = font_size) +
   theme(
     text = element_text(size = font_size),
     axis.title = element_text(size = font_size),
@@ -83,8 +186,8 @@ p_left <- ggplot(df_loghazard, aes(x = tend, y = loghazard, color = transition, 
     legend.key.width = unit(1.5, "cm")
   )
 
-# Right Panel: Transition Probability
-p_right <- ggplot(df_tp, aes(x = tend, y = trans_prob, color = transition, linetype = model, fill = transition)) +
+# Bottom Panel: Transition Probability
+p_bottom <- ggplot(df_tp, aes(x = tend, y = trans_prob, color = transition, linetype = model, fill = transition)) +
   geom_ribbon(aes(ymin = trans_lower, ymax = trans_upper), alpha = 0.2, colour = NA, show.legend = FALSE) +
   geom_line(linewidth = 1.2) +
   scale_color_manual(values = color_values, breaks = transition_labels) +
@@ -96,7 +199,7 @@ p_right <- ggplot(df_tp, aes(x = tend, y = trans_prob, color = transition, linet
     color = "Transition",
     linetype = "Model"
   ) +
-  theme_classic() +
+  theme_bw(base_size = font_size) +
   theme(
     text = element_text(size = font_size),
     axis.title = element_text(size = font_size),
@@ -108,7 +211,7 @@ p_right <- ggplot(df_tp, aes(x = tend, y = trans_prob, color = transition, linet
 
 # --- 3. Combine plots with patchwork ---
 
-combined_plot <- p_left / p_right +
+combined_plot <- p_top / p_bottom +
   plot_layout(guides = "collect") &
   theme(
     legend.position = "bottom",
@@ -127,10 +230,10 @@ ggsave(
 
 # 1->2 and 1->4 plots ----
 
-plots_pam_ssts_age_12 <- readRDS(file.path(dir_data, "pam_ssts_plots_age_12.rds"))
-plots_pam_ssts_age_14 <- readRDS(file.path(dir_data, "pam_ssts_plots_age_14.rds"))
-plots_pam_mts_age_12  <- readRDS(file.path(dir_data, "pam_mts_plots_age_12.rds"))
-plots_pam_mts_age_14  <- readRDS(file.path(dir_data, "pam_mts_plots_age_14.rds"))
+plots_pam_ssts_age_12 <- readRDS(file.path(dir_data_baseline_plots, "pam_ssts_plots_age_12.rds"))
+plots_pam_ssts_age_14 <- readRDS(file.path(dir_data_baseline_plots, "pam_ssts_plots_age_14.rds"))
+plots_pam_mts_age_12  <- readRDS(file.path(dir_data_baseline_plots, "pam_mts_plots_age_12.rds"))
+plots_pam_mts_age_14  <- readRDS(file.path(dir_data_baseline_plots, "pam_mts_plots_age_14.rds"))
 
 ## contour plots
 p12_ssts_log <- plots_pam_ssts_age_12$p_contour_loghazard
@@ -151,16 +254,18 @@ plot_list <- list(
 )
 
 plot_list <- lapply(plot_list, function(p) {
-  p + theme(
-    text = element_text(size = font_size),
-    plot.title = element_text(size = font_size, hjust = 0.5),
-    plot.subtitle = element_text(face = "italic", hjust = 0.5),
-    axis.title = element_text(size = font_size),
-    axis.text = element_text(size = font_size),
-    legend.title = element_blank(),
-    legend.text = element_text(size = font_size),
-    aspect.ratio = 1
-  )
+  p +
+    theme_bw(base_size = font_size) +
+    theme(
+      text = element_text(size = font_size),
+      plot.title = element_text(size = font_size, hjust = 0.5),
+      plot.subtitle = element_text(face = "italic", hjust = 0.5),
+      axis.title = element_text(size = font_size),
+      axis.text = element_text(size = font_size),
+      legend.title = element_blank(),
+      legend.text = element_text(size = font_size),
+      aspect.ratio = 1
+    )
 })
 
 # --- Define plots with vertically stretched legends on the right ---
@@ -219,16 +324,18 @@ slice_plot_list <- list(
 )
 
 slice_plot_list <- lapply(slice_plot_list, function(p) {
-  p + theme(
-    text = element_text(size = font_size),
-    plot.title = element_blank(),
-    plot.subtitle = element_blank(),
-    axis.title = element_text(size = font_size),
-    axis.text = element_text(size = font_size),
-    legend.title = element_text(size = font_size),
-    legend.text = element_text(size = font_size),
-    legend.position = "none"
-  )
+  p +
+    theme_bw(base_size = font_size) +
+    theme(
+      text = element_text(size = font_size),
+      plot.title = element_blank(),
+      plot.subtitle = element_blank(),
+      axis.title = element_text(size = font_size),
+      axis.text = element_text(size = font_size),
+      legend.title = element_text(size = font_size),
+      legend.text = element_text(size = font_size),
+      legend.position = "none"
+    )
 })
 
 slice_plot_list$p12_tl <- slice_plot_list$p12_tl + labs(title = "SSTS PAM", x = NULL) + theme(plot.title = element_text(size = font_size, hjust = 0.5))
@@ -271,8 +378,8 @@ ggsave(
 
 for (trans_num in c("23", "24")) {
 
-  ssts_file <- file.path(dir_data, paste0("pam_ssts_plots_age_", trans_num, ".rds"))
-  mts_file  <- file.path(dir_data, paste0("pam_mts_plots_age_", trans_num, ".rds"))
+  ssts_file <- file.path(dir_data_baseline_plots, paste0("pam_ssts_plots_age_", trans_num, ".rds"))
+  mts_file  <- file.path(dir_data_baseline_plots, paste0("pam_mts_plots_age_", trans_num, ".rds"))
 
   plots_pam_ssts <- readRDS(ssts_file)
   plots_pam_mts  <- readRDS(mts_file)
@@ -284,6 +391,7 @@ for (trans_num in c("23", "24")) {
 
   p_tl <- p_ssts_log +
     labs(title = "SSTS PAM", subtitle = "Log-hazard", y = "Age at CKD progression", x = "Age") +
+    theme_bw(base_size = font_size) +
     theme(
       text = element_text(size = font_size),
       plot.title = element_text(size = font_size, hjust = 0.5),
@@ -298,6 +406,7 @@ for (trans_num in c("23", "24")) {
 
   p_tr <- p_mts_log +
     labs(title = "MTS PAM", subtitle = "Log-hazard", y = NULL, x = "Age") +
+    theme_bw(base_size = font_size) +
     theme(
       text = element_text(size = font_size),
       plot.title = element_text(size = font_size, hjust = 0.5),
@@ -313,6 +422,7 @@ for (trans_num in c("23", "24")) {
 
   p_bl <- p_ssts_tp +
     labs(title = "SSTS PAM", subtitle = "Transition Probability", y = "Age at CKD progression", x = "Age") +
+    theme_bw(base_size = font_size) +
     theme(
       text = element_text(size = font_size),
       plot.title = element_text(size = font_size, hjust = 0.5),
@@ -327,6 +437,7 @@ for (trans_num in c("23", "24")) {
 
   p_br <- p_mts_tp +
     labs(title = "MTS PAM", subtitle = "Transition Probability", y = NULL, x = "Age") +
+    theme_bw(base_size = font_size) +
     theme(
       text = element_text(size = font_size),
       plot.title = element_text(size = font_size, hjust = 0.5),
@@ -389,8 +500,8 @@ for (trans_num in c("23", "24")) {
 
 for (trans_num in c("23", "24")) {
 
-  ssts_file <- file.path(dir_data, paste0("pam_ssts_plots_age_", trans_num, ".rds"))
-  mts_file  <- file.path(dir_data, paste0("pam_mts_plots_age_", trans_num, ".rds"))
+  ssts_file <- file.path(dir_data_baseline_plots, paste0("pam_ssts_plots_age_", trans_num, ".rds"))
+  mts_file  <- file.path(dir_data_baseline_plots, paste0("pam_mts_plots_age_", trans_num, ".rds"))
 
   plots_pam_ssts <- readRDS(ssts_file)
   plots_pam_mts  <- readRDS(mts_file)
@@ -406,7 +517,9 @@ for (trans_num in c("23", "24")) {
   )
 
   plot_list <- lapply(plot_list, function(p) {
-    p + theme(
+    p +
+      theme_bw(base_size = font_size) +
+      theme(
         text = element_text(size = font_size),
         plot.title = element_blank(),
         plot.subtitle = element_blank(),

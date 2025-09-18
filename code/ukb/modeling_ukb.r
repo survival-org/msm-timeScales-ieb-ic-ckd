@@ -247,12 +247,13 @@ events_w2 <- events_w %>%
   mutate(weight_g = 1 / n()) %>%
   ungroup()
 
-ps_formula_rhs <- ~ diabetes +
+ps_formula_rhs <- ~ sex +
+                     diabetes +
                      s(sc_BMI, bs = 'ps', k = 20) +
                      s(sc_UACR, bs = 'ps', k = 20) +
                      s(pgs_cross_594_umod, bs = 'ps', k = 20) +
-                     smoking +
-                     s(eGFRcrea, bs = 'ps', k = 20)
+                     smoking
+                    #  s(eGFRcrea, bs = 'ps', k = 20)
 
 formula_list <- list(
   update(ps_formula_rhs, rs_77924615_A_G_genotype ~ .), # 2 vs 1
@@ -1313,7 +1314,7 @@ compute_smd <- function(df,
   }
 }
 
-risk_factors <- c("pgs_cross_594_umod", "diabetes", "sc_BMI", "sc_UACR", "smoking", "eGFRcrea")
+risk_factors <- c("sex", "pgs_cross_594_umod", "diabetes", "sc_BMI", "sc_UACR", "smoking", "eGFRcrea")
 states <- c("State 0", "State 1", "State 2")
 genotype_combos <- list(
   c(0, 1), # UMOD genotype 0 and 1
@@ -1525,15 +1526,13 @@ formulas <- list(
   pam_ssts = "ped_status ~
     s(tend, bs = 'ps', k = 20, by = transition) +
     s(age_onset, bs = 'ps', k = 20, by = transition_after_onset_strat) +
-    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-    sex*transition",
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression)",
   pam_mts = "ped_status ~
     s(tend, bs = 'ps', k = 20, by = transition_to_death) +
     s(tend_onset, bs = 'ps', k = 20, by = transition_after_onset) +
     s(age_onset, bs = 'ps', k = 20, by = transition_after_onset) +
     s(tend_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression) +
-    sex*transition"
+    s(age_progression, bs = 'ps', k = 20, by = transition_after_progression)"
 )
 
 num_cores   <- length(formulas)

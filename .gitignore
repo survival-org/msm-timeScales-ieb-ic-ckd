@@ -1,4 +1,7 @@
-results/simulations
+results/simulations/datasets
+# results/simulations/figures
+results/simulations/registries
+results/simulations/figures/ic/bh/line_plots
 markdowns/**/*.md
 markdowns/**/*_files/
 markdowns/**/libs/

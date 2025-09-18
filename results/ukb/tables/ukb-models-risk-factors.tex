@@ -1,0 +1,38 @@
+\begin{table}[!ht]
+\caption{\captionukbmodelsriskfactors}
+\label{tab:ukb-models-risk-factors}
+\centering
+\begin{tabular}[t]{lcrrr}
+\toprule
+Risk Factors & Transition & Coefficient & SE & P-value\\
+\midrule
+\rowcolor{gray!10}  & 0→1 & 0.284 & 0.025 & $<$0.001 \\
+\rowcolor{gray!10}  & 1→2 & -0.121 & 0.090 & 0.181 \\
+\rowcolor{gray!10} \multirow{-3}{*}{\cellcolor{gray!10}G only} & 2→3 & -0.311 & 0.146 & 0.034 \\
+ & 0→1 & 0.284 & 0.025 & $<$0.001 \\
+ & 1→2 & -0.111 & 0.091 & 0.222 \\
+\multirow{-3}{*}{\shortstack[l]{G + Sex}} & 2→3 & -0.330 & 0.146 & 0.024 \\
+\rowcolor{gray!10}  & 0→1 & 0.282 & 0.025 & $<$0.001 \\
+\rowcolor{gray!10}  & 1→2 & -0.113 & 0.091 & 0.214 \\
+\rowcolor{gray!10} \multirow{-3}{*}{\cellcolor{gray!10}\shortstack[l]{G + Sex + PGS}} & 2→3 & -0.330 & 0.146 & 0.024 \\
+ & 0→1 & 0.283 & 0.025 & $<$0.001 \\
+ & 1→2 & -0.107 & 0.091 & 0.237 \\
+\multirow{-3}{*}{\shortstack[l]{G + Sex + PGS + Diabetes}} & 2→3 & -0.331 & 0.146 & 0.024 \\
+\rowcolor{gray!10}  & 0→1 & 0.280 & 0.026 & $<$0.001 \\
+\rowcolor{gray!10}  & 1→2 & -0.086 & 0.095 & 0.364 \\
+\rowcolor{gray!10} \multirow{-3}{*}{\cellcolor{gray!10}\shortstack[l]{G + Sex + PGS + Diabetes\\ + Smoking}} & 2→3 & -0.243 & 0.175 & 0.166 \\
+ & 0→1 & 0.288 & 0.026 & $<$0.001 \\
+ & 1→2 & -0.111 & 0.095 & 0.243 \\
+\multirow{-3}{*}{\shortstack[l]{G + Sex + PGS + Diabetes\\ + Smoking + BMI}} & 2→3 & -0.230 & 0.174 & 0.187 \\
+\rowcolor{gray!10}  & 0→1 & 0.278 & 0.026 & $<$0.001 \\
+\rowcolor{gray!10}  & 1→2 & 0.045 & 0.100 & 0.654 \\
+\rowcolor{gray!10} \multirow{-3}{*}{\cellcolor{gray!10}\shortstack[l]{G + Sex + PGS + Diabetes\\ + Smoking + BMI + uACR}} & 2→3 & -0.159 & 0.178 & 0.371 \\
+\bottomrule
+\end{tabular}
+\parbox{\linewidth}{\footnotesize
+\begin{itemize}[leftmargin=*, noitemsep, label=\textcolor{white}{\textbullet}]
+ \item G: Genetic variant rs77924615.
+ \item 0: Healthy; 1: Mild CKD; 2: Severe CKD; 3: ESKD.
+\end{itemize}
+}
+\end{table}

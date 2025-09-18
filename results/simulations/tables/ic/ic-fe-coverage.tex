@@ -1,0 +1,30 @@
+\begin{table*}[htbp]
+\centering
+\caption{\captionicfecoverage}
+\label{tab:sim-ic-fe-coverage}
+\begin{sideways}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcccccc}
+\toprule
+& & \multicolumn{3}{c}{Piecewise Exponential DGP} & \multicolumn{3}{c}{Weibull DGP} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8}
+Algorithm & \shortstack[l]{Estimation \\ Time Point} & Beta & Uniform & Equidistant & Beta & Uniform & Equidistant \\
+\midrule
+PAM & Exact & \makecell{0.93\\(0.91; 0.95)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.98\\(0.96; 0.99)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.98)} \\
+PAM & Mid & \makecell{0.96\\(0.94; 0.98)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.94\\(0.91; 0.96)} & \makecell{0.93\\(0.91; 0.95)} & \makecell{0.96\\(0.94; 0.98)} & \makecell{0.95\\(0.93; 0.97)} \\
+PAM & End & \makecell{0.96\\(0.93; 0.97)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.94\\(0.91; 0.96)} & \makecell{0.95\\(0.93; 0.97)} \\
+\addlinespace
+Cox & Exact & \makecell{0.97\\(0.95; 0.98)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.96\\(0.94; 0.98)} & \makecell{0.96\\(0.93; 0.97)} \\
+Cox & Mid & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.96\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.94\\(0.92; 0.96)} \\
+Cox & End & \makecell{0.95\\(0.92; 0.96)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.95\\(0.92; 0.96)} & \makecell{0.96\\(0.93; 0.97)} & \makecell{0.97\\(0.95; 0.98)} & \makecell{0.95\\(0.92; 0.96)} \\
+\addlinespace
+Weibull AFT & Exact & \makecell{0.92\\(0.89; 0.94)} & \makecell{0.94\\(0.91; 0.96)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.97\\(0.95; 0.98)} \\
+Weibull AFT & Adj. & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.95\\(0.92; 0.96)} & \makecell{0.93\\(0.90; 0.95)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.95\\(0.92; 0.96)} & \makecell{0.93\\(0.91; 0.95)} \\
+Weibull AFT & Mid & \makecell{0.92\\(0.89; 0.94)} & \makecell{0.93\\(0.90; 0.95)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.95\\(0.92; 0.96)} & \makecell{0.96\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.97)} \\
+Weibull AFT & End & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.94\\(0.92; 0.96)} & \makecell{0.95\\(0.93; 0.97)} & \makecell{0.96\\(0.94; 0.97)} & \makecell{0.94\\(0.92; 0.96)} \\
+\bottomrule
+\end{tabular}
+\normalsize
+\end{sideways}
+\end{table*}

@@ -1671,7 +1671,7 @@ plot_coverage_fe <- function(data, grouping_vars = NULL) {
       geom_hline(yintercept = 0.95, color = "orange", linetype = "dashed") +
       labs(
         title = name,
-        x     = "Algorithm",
+        x     = "Model",
         y     = "Coverage",
         fill  = "IC Point"
       ) +
@@ -1861,7 +1861,7 @@ generate_multi_dgp_latex <- function(summary_df, coverage_type) {
   }
   cmidrule_line <- paste(cmidrule_items, collapse = " ")
   mechanism_header_line <- paste(
-    "Algorithm & \\shortstack[l]{Estimation \\\\ Time Point}",
+    "Model & \\shortstack[l]{Estimation \\\\ Time Point}",
     paste(col_info$mechanism, collapse = " & "),
     sep = " & "
   )
@@ -2008,7 +2008,7 @@ generate_bias_latex_fe <- function(summary_df, rounding_digits = 2) {
   data_cols <- names(summary_df)[-c(1, 2)]
   mechanism_headers <- unique(sapply(strsplit(data_cols, "_"), tail, 1))
   header_row <- paste(
-    "Algorithm & \\shortstack[l]{Estimation \\\\ Time Point}",
+    "Model & \\shortstack[l]{Estimation \\\\ Time Point}",
     paste(mechanism_headers, collapse = " & "),
     paste(mechanism_headers, collapse = " & "),
     sep = " & "
@@ -2051,7 +2051,7 @@ generate_coverage_latex_fe <- function(summary_df) {
   data_cols <- names(summary_df)[-c(1, 2)]
   mechanism_headers <- unique(sapply(strsplit(data_cols, "_"), tail, 1))
   header_row <- paste(
-    "Algorithm & \\shortstack[l]{Estimation \\\\ Time Point}",
+    "Model & \\shortstack[l]{Estimation \\\\ Time Point}",
     paste(mechanism_headers, collapse = " & "),
     paste(mechanism_headers, collapse = " & "),
     sep = " & "

@@ -1,0 +1,24 @@
+\begin{table*}[htbp]
+\centering
+\caption{\captionfecoverage}
+\label{tab:sim-ts-fe-coverage}
+\begin{sideways}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccccccc}
+\toprule
+& \multicolumn{4}{c}{SSTS DGP} & \multicolumn{4}{c}{MTS DGP} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-9}
+& \multicolumn{2}{c}{SSTS PAM} & \multicolumn{2}{c}{MTS PAM} & \multicolumn{2}{c}{SSTS PAM} & \multicolumn{2}{c}{MTS PAM} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+Transition & \shortstack[c]{Penalized\\Splines} & \shortstack[c]{Factor\\Smooth} & \shortstack[c]{Penalized\\Splines} & \shortstack[c]{Factor\\Smooth} & \shortstack[c]{Penalized\\Splines} & \shortstack[c]{Factor\\Smooth} & \shortstack[c]{Penalized\\Splines} & \shortstack[c]{Factor\\Smooth} \\
+\midrule
+$\beta_{x_1,0\rightarrow 1}$ & \makecell[t]{0.97\\(0.95; 0.98)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.94\\(0.92; 0.96)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.97\\(0.95; 0.98)} & \makecell[t]{0.95\\(0.93; 0.97)} \\
+$\beta_{x_1,0\rightarrow 3}$ & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{1.00\\(0.99; 1.00)} & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{1.00\\(0.99; 1.00)} & \makecell[t]{1.00\\(0.99; 1.00)} \\
+$\beta_{x_1,1\rightarrow 2}$ & \makecell[t]{0.97\\(0.95; 0.98)} & \makecell[t]{0.98\\(0.96; 0.99)} & \makecell[t]{0.95\\(0.92; 0.97)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.97\\(0.96; 0.99)} & \makecell[t]{0.99\\(0.97; 0.99)} & \makecell[t]{0.98\\(0.97; 0.99)} & \makecell[t]{0.98\\(0.96; 0.99)} \\
+$\beta_{x_1,1\rightarrow 3}$ & \makecell[t]{0.96\\(0.94; 0.98)} & \makecell[t]{0.98\\(0.96; 0.99)} & \makecell[t]{0.95\\(0.93; 0.97)} & \makecell[t]{0.96\\(0.94; 0.98)} & \makecell[t]{0.98\\(0.97; 0.99)} & \makecell[t]{0.99\\(0.98; 1.00)} & \makecell[t]{0.98\\(0.96; 0.99)} & \makecell[t]{0.97\\(0.95; 0.98)} \\
+\bottomrule
+\end{tabular}
+\normalsize
+\end{sideways}
+\end{table*}
